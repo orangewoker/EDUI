@@ -1,4 +1,4 @@
-name: Build unsigned EDUI iOS IPA
+name: Build EDUI iOS IPA
 
 on:
   push:
@@ -67,10 +67,34 @@ jobs:
           cd build/ios/unsigned-ipa
           zip -qry "../EDUI-${VERSION}-unsigned.ipa" Payload
 
+      - name: Package SideStore-ready IPA
+        shell: bash
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          ROOT="$PWD"
+          rm -rf build/ios/sidestore-ipa
+          mkdir -p build/ios/sidestore-ipa/Payload
+          cp -R build/ios/iphoneos/Runner.app build/ios/sidestore-ipa/Payload/EDUI.app
+          APP="build/ios/sidestore-ipa/Payload/EDUI.app"
+          WIDGET="$APP/PlugIns/EDUIWidget.appex"
+          codesign --force --sign - --timestamp=none \
+            --entitlements ios/EDUIWidget/EDUIWidget.entitlements "$WIDGET"
+          codesign --force --sign - --timestamp=none \
+            --entitlements ios/Runner/Runner.entitlements "$APP"
+          codesign --verify --deep --strict "$APP"
+          codesign -d --entitlements :- "$APP" > /tmp/edui-app-entitlements.plist 2>/dev/null
+          codesign -d --entitlements :- "$WIDGET" > /tmp/edui-widget-entitlements.plist 2>/dev/null
+          grep -q 'group.com.orangewoker.edui' /tmp/edui-app-entitlements.plist
+          grep -q 'group.com.orangewoker.edui' /tmp/edui-widget-entitlements.plist
+          cd build/ios/sidestore-ipa
+          zip -qry "../EDUI-${VERSION}-sidestore.ipa" Payload
+
       - uses: actions/upload-artifact@v4
         with:
-          name: EDUI-unsigned-ipa
-          path: build/ios/EDUI-*-unsigned.ipa
+          name: EDUI-ios-ipa
+          path: |
+            build/ios/EDUI-*-unsigned.ipa
+            build/ios/EDUI-*-sidestore.ipa
 
       - name: Publish unsigned IPA release
         uses: softprops/action-gh-release@v2
@@ -78,6 +102,8 @@ jobs:
           tag_name: ios-v${{ steps.version.outputs.version }}
           target_commitish: ${{ github.sha }}
           name: EDUI iOS ${{ steps.version.outputs.version }}
-          body: Unsigned EDUI iOS IPA with WidgetKit extension for sideload re-signing.
+          body: EDUI iOS IPA with WidgetKit extension. Use the sidestore asset with SideStore so App Group metadata is preserved.
           prerelease: true
-          files: build/ios/EDUI-${{ steps.version.outputs.version }}-unsigned.ipa
+          files: |
+            build/ios/EDUI-${{ steps.version.outputs.version }}-unsigned.ipa
+            build/ios/EDUI-${{ steps.version.outputs.version }}-sidestore.ipa

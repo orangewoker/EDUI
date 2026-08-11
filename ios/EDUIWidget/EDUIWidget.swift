@@ -3,8 +3,13 @@ import Foundation
 import SwiftUI
 import WidgetKit
 
-private let appGroupId = "group.com.orangewoker.edui"
+private let baseAppGroupId = "group.com.orangewoker.edui"
 private let widgetKind = "EDUIWidget"
+
+private var appGroupId: String {
+    let groups = Bundle.main.object(forInfoDictionaryKey: "ALTAppGroups") as? [String]
+    return groups?.first(where: { $0.contains(baseAppGroupId) }) ?? baseAppGroupId
+}
 
 struct MonitorAccountEntity: AppEntity, Codable, Hashable, Sendable {
     static var typeDisplayRepresentation: TypeDisplayRepresentation = "监控账户"
