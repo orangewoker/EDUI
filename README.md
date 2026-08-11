@@ -7,6 +7,7 @@ EDUI 是一款面向 iPhone 的模型额度监控工具。它可以读取模型�
 - AMD Radeon API/OpenAI 兼容服务：通过最小聊天请求自动读取 USD、Token 和请求数 `x-ratelimit-*` 响应头，不要求手动选择模型。
 - DeepSeek：通过官方 `/user/balance` 接口读取余额。
 - OpenAI API：通过官方 Organization Costs API 汇总最近 30 天用量；可填写月预算上限以显示剩余额度。
+- Sub2API：使用官方兼容的 `GET /v1/usage` 读取账户钱包余额或订阅剩余额度，不发送聊天探测请求。
 - 官方账户 / 自定义 JSON：支持 API Key 或手动 Cookie、自定义 GET 路径及点号字段路径。
 - 官方登录跳转：优先使用 Universal Link 打开已安装的官方 App，否则打开网页登录页。
 - 账户添加页默认隐藏高级字段；OpenAI 兼容中转只需要填写 Base URL 和 API Key，额度格式会自动识别。
@@ -20,6 +21,19 @@ EDUI 是一款面向 iPhone 的模型额度监控工具。它可以读取模型�
 OpenAI 当前没有公开供第三方 App 读取 ChatGPT/Codex 订阅剩余额度的 OAuth 或额度 API。EDUI 提供 Codex 官方登录跳转和手动 Cookie 模板，并预填实验性的 5 小时额度接口、已用百分比换算和重置时间字段；如果站点调整内部接口，可以直接在账户编辑页修改路径和字段。Cookie 只保存在 iOS Keychain，不会写入 Widget 或账户配置。
 
 OpenAI API 组织账户不需要 Cookie。请使用组织 Admin API Key 调用官方 Costs API；普通项目 API Key通常没有读取组织成本的权限。
+
+### Sub2API 配置
+
+选择“Sub2API 余额”，填站点根地址和用户 API Key 即可，例如：
+
+```text
+站点地址：https://sub2.zhisheji.fun:1100
+余额接口（自动）：/v1/usage
+```
+
+Sub2API 源码在网关路由中注册了 `/v1/usage`，钱包模式返回 `remaining`、`balance`、`unit`，订阅模式还返回 `quota` / `rate_limits`。已有的“OpenAI 兼容额度”账户也会先自动尝试这个接口，因此无需重新添加账户。
+
+这里不要填写后台面板的 `/api/v1/usage`：那是 JWT 登录后的面板用量接口；用户 API Key 余额接口是网关的 `/v1/usage`。
 
 ## AMD Radeon API
 

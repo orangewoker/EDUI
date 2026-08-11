@@ -24,6 +24,7 @@ class QuotaClient {
     }
     return switch (account.providerType) {
       ProviderType.openAI => _refreshOpenAI(account, key),
+      ProviderType.sub2Api => _refreshSub2Api(account, key),
       ProviderType.amdRadeon => _refreshOpenAICompatible(account, key),
       ProviderType.deepSeek => _refreshDeepSeek(account, key),
       ProviderType.customJson => _refreshCustom(account, key),
@@ -90,6 +91,12 @@ class QuotaClient {
     MonitorAccount account,
     String apiKey,
   ) async {
+    // Sub2API exposes the user's actual wallet/subscription balance through
+    // GET /v1/usage. Try that first so existing OpenAI-compatible accounts do
+    // not need to be recreated or manually configured.
+    final sub2ApiSnapshot = await _tryRefreshSub2Api(account, apiKey);
+    if (sub2ApiSnapshot != null) return sub2ApiSnapshot;
+
     final models = await _availableModels(account.baseUrl, apiKey);
     if (models.isEmpty) {
       throw const QuotaException('服务的 /models 没有返回可用模型');
@@ -105,6 +112,131 @@ class QuotaClient {
     }
     throw QuotaException(
       '自动尝试了 ${models.take(12).length} 个模型，均不可用：${lastError?.message ?? '未知错误'}',
+    );
+  }
+
+  Future<QuotaSnapshot> _refreshSub2Api(
+    MonitorAccount account,
+    String apiKey,
+  ) async {
+    final response = await _sub2ApiUsageResponse(
+      account.baseUrl,
+      apiKey,
+      strict: true,
+    );
+    if (response == null) {
+      throw const QuotaException('未找到 Sub2API /v1/usage 余额接口，请检查站点地址和 API Key');
+    }
+    return _parseSub2ApiUsage(account, response);
+  }
+
+  Future<QuotaSnapshot?> _tryRefreshSub2Api(
+    MonitorAccount account,
+    String apiKey,
+  ) async {
+    final response = await _sub2ApiUsageResponse(
+      account.baseUrl,
+      apiKey,
+      strict: false,
+    );
+    return response == null ? null : _parseSub2ApiUsage(account, response);
+  }
+
+  Future<http.Response?> _sub2ApiUsageResponse(
+    String baseUrl,
+    String apiKey, {
+    required bool strict,
+  }) async {
+    final candidates = _sub2ApiUsageCandidates(baseUrl);
+    QuotaException? lastError;
+    for (final uri in candidates) {
+      try {
+        final response = await _client
+            .get(uri, headers: _apiKeyHeaders(apiKey))
+            .timeout(Duration(seconds: strict ? 30 : 8));
+        if (response.statusCode >= 200 && response.statusCode < 300) {
+          final body = _decodeObject(response.body);
+          if (body != null && _looksLikeSub2ApiUsage(body)) return response;
+          continue;
+        }
+        if (response.statusCode == 404 || response.statusCode == 405) continue;
+        if (strict) {
+          _requireSuccess(response);
+        }
+      } on QuotaException catch (error) {
+        lastError = error;
+        if (strict) rethrow;
+      } catch (error) {
+        if (strict) {
+          throw QuotaException('读取 Sub2API 余额失败：$error');
+        }
+      }
+    }
+    if (strict && lastError != null) throw lastError;
+    return null;
+  }
+
+  List<Uri> _sub2ApiUsageCandidates(String baseUrl) {
+    final normalized = baseUrl.replaceFirst(RegExp(r'/+$'), '');
+    final parsed = Uri.parse(normalized);
+    final path = parsed.path.replaceFirst(RegExp(r'/+$'), '');
+    if (path.toLowerCase().endsWith('/v1')) {
+      return [_endpoint(normalized, 'usage')];
+    }
+    return [_endpoint(normalized, 'v1/usage')];
+  }
+
+  QuotaSnapshot _parseSub2ApiUsage(
+    MonitorAccount account,
+    http.Response response,
+  ) {
+    final body = _decodeObject(response.body);
+    if (body == null) {
+      throw const QuotaException('Sub2API 余额接口返回的不是 JSON');
+    }
+    final quota = body['quota'] is Map
+        ? Map<String, dynamic>.from(body['quota'] as Map)
+        : const <String, dynamic>{};
+    final rateLimits = body['rate_limits'] is List
+        ? (body['rate_limits'] as List).whereType<Map>().toList()
+        : const <Map>[];
+    final firstRateLimit = rateLimits.isEmpty
+        ? const <String, dynamic>{}
+        : Map<String, dynamic>.from(rateLimits.first);
+    final remaining = _numberFrom(
+      body['remaining'] ??
+          quota['remaining'] ??
+          body['balance'] ??
+          firstRateLimit['remaining'],
+    );
+    if (remaining == null) {
+      throw const QuotaException('Sub2API 余额响应缺少 remaining/balance');
+    }
+
+    var limit =
+        _numberFrom(quota['limit']) ?? _numberFrom(firstRateLimit['limit']);
+    var used =
+        _numberFrom(quota['used']) ?? _numberFrom(firstRateLimit['used']);
+    final resetAt = _dateFrom(quota['reset_at'] ?? firstRateLimit['reset_at']);
+    final mode = '${body['mode'] ?? ''}'.trim();
+    final planName = '${body['planName'] ?? ''}'.trim();
+    final unit = '${body['unit'] ?? account.unit}'.trim();
+    final message = [
+      'Sub2API /v1/usage',
+      if (planName.isNotEmpty) planName,
+      if (mode == 'quota_limited') 'API Key 配额',
+      if (mode == 'unrestricted' && planName.isEmpty) '账户余额',
+    ].join(' · ');
+    return QuotaSnapshot(
+      accountId: account.id,
+      accountName: account.name,
+      remaining: remaining,
+      limit: limit,
+      used: used,
+      unit: unit.isEmpty ? 'USD' : unit,
+      updatedAt: DateTime.now(),
+      resetAt: resetAt,
+      message: message,
     );
   }
 
@@ -376,6 +508,43 @@ class QuotaClient {
       }
     }
     return current;
+  }
+
+  Map<String, dynamic>? _decodeObject(String raw) {
+    try {
+      final decoded = jsonDecode(raw);
+      return decoded is Map ? Map<String, dynamic>.from(decoded) : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  bool _looksLikeSub2ApiUsage(Map<String, dynamic> body) =>
+      body.containsKey('remaining') ||
+      body.containsKey('balance') ||
+      body['quota'] is Map ||
+      body['mode'] == 'unrestricted' ||
+      body['mode'] == 'quota_limited';
+
+  double? _numberFrom(dynamic value) =>
+      value is num ? value.toDouble() : double.tryParse('$value');
+
+  DateTime? _dateFrom(dynamic value) {
+    if (value == null) return null;
+    if (value is num) {
+      final raw = value.toInt();
+      return DateTime.fromMillisecondsSinceEpoch(
+        raw.abs() >= 100000000000 ? raw : raw * 1000,
+      );
+    }
+    final raw = '$value'.trim();
+    final numeric = int.tryParse(raw);
+    if (numeric != null) {
+      return DateTime.fromMillisecondsSinceEpoch(
+        numeric.abs() >= 100000000000 ? numeric : numeric * 1000,
+      );
+    }
+    return DateTime.tryParse(raw);
   }
 }
 

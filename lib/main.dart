@@ -294,7 +294,9 @@ class _AccountCard extends StatelessWidget {
                           ),
                         ),
                         Text(
-                          account.providerType.label,
+                          snapshot?.message?.startsWith('Sub2API') == true
+                              ? ProviderType.sub2Api.label
+                              : account.providerType.label,
                           style: Theme.of(context).textTheme.bodySmall,
                         ),
                       ],
@@ -469,6 +471,7 @@ class _AccountEditorState extends State<AccountEditor> {
     final custom = type == ProviderType.customJson;
     final openAI = type == ProviderType.amdRadeon;
     final officialOpenAI = type == ProviderType.openAI;
+    final sub2Api = type == ProviderType.sub2Api;
     final cookie = authenticationType == AuthenticationType.manualCookie;
     return Scaffold(
       appBar: AppBar(
@@ -511,6 +514,13 @@ class _AccountEditorState extends State<AccountEditor> {
                 icon: const Icon(Icons.code_rounded),
                 label: const Text('Codex 订阅'),
               ),
+              OutlinedButton.icon(
+                onPressed: () => _applyPreset(
+                  MonitorAccount.sub2ApiDefault(id: 'editor-preview'),
+                ),
+                icon: const Icon(Icons.account_balance_wallet_rounded),
+                label: const Text('Sub2API 余额'),
+              ),
             ],
           ),
           const SizedBox(height: 16),
@@ -541,6 +551,10 @@ class _AccountEditorState extends State<AccountEditor> {
                   _setFields(
                     MonitorAccount.openAIDefault(id: 'editor-preview'),
                   );
+                } else if (value == ProviderType.sub2Api) {
+                  _setFields(
+                    MonitorAccount.sub2ApiDefault(id: 'editor-preview'),
+                  );
                 }
               });
             },
@@ -570,7 +584,14 @@ class _AccountEditorState extends State<AccountEditor> {
             const SizedBox(height: 14),
           ],
           _field(name, '显示名称'),
-          _field(baseUrl, 'API Base URL', keyboard: TextInputType.url),
+          _field(
+            baseUrl,
+            sub2Api ? 'Sub2API 站点地址' : 'API Base URL',
+            helper: sub2Api
+                ? '例如 https://your-sub2api.example.com，不要填写 /usage'
+                : null,
+            keyboard: TextInputType.url,
+          ),
           if (openAI)
             const Padding(
               padding: EdgeInsets.only(bottom: 14),
@@ -587,6 +608,18 @@ class _AccountEditorState extends State<AccountEditor> {
               '月预算上限（可选）',
               helper: '填写后显示预算余额和进度；留空则显示最近 30 天已用',
               keyboard: const TextInputType.numberWithOptions(decimal: true),
+            ),
+          if (sub2Api)
+            const Padding(
+              padding: EdgeInsets.only(bottom: 14),
+              child: ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(Icons.account_balance_wallet_rounded),
+                title: Text('自动读取账户余额'),
+                subtitle: Text(
+                  '调用 Sub2API 的 /v1/usage，读取 remaining / balance；无需选择模型，也不会产生测试请求。',
+                ),
+              ),
             ),
           if (custom)
             ExpansionTile(
@@ -673,6 +706,8 @@ class _AccountEditorState extends State<AccountEditor> {
                   ? '已安全保存；留空表示不修改'
                   : cookie
                   ? '粘贴完整 Cookie Header，保存在 iOS Keychain'
+                  : sub2Api
+                  ? 'Sub2API 用户 API Key；保存在 iOS Keychain'
                   : type == ProviderType.openAI
                   ? 'OpenAI Costs API 需要组织 Admin API Key'
                   : '保存在 iOS Keychain，不写入小组件数据',

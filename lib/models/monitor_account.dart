@@ -2,12 +2,14 @@ import 'dart:convert';
 
 enum ProviderType {
   openAI,
+  sub2Api,
   amdRadeon,
   deepSeek,
   customJson;
 
   String get label => switch (this) {
     ProviderType.openAI => 'OpenAI API 用量',
+    ProviderType.sub2Api => 'Sub2API 账户余额',
     ProviderType.amdRadeon => 'OpenAI 兼容额度（自动识别）',
     ProviderType.deepSeek => 'DeepSeek 余额',
     ProviderType.customJson => '官方账户 / 自定义 JSON',
@@ -93,6 +95,15 @@ class MonitorAccount {
     loginUrl:
         'https://platform.openai.com/settings/organization/billing/overview',
   );
+
+  factory MonitorAccount.sub2ApiDefault({String id = 'sub2api'}) =>
+      MonitorAccount(
+        id: id,
+        name: 'Sub2API 余额',
+        providerType: ProviderType.sub2Api,
+        baseUrl: '',
+        unit: 'USD',
+      );
 
   factory MonitorAccount.codexDefault({required String id}) => MonitorAccount(
     id: id,

@@ -79,6 +79,9 @@ void main() {
   test('reads AMD daily USD and RPM quota response headers', () async {
     final mock = MockClient((request) async {
       expect(request.headers['Authorization'], 'Bearer secret');
+      if (request.url.path.endsWith('/v1/usage')) {
+        return http.Response('{}', 404);
+      }
       if (request.url.path.endsWith('/models')) {
         return http.Response(
           jsonEncode({
@@ -121,6 +124,98 @@ void main() {
     expect(snapshot.requestRemaining, 29);
     expect(snapshot.remainingRatio, 0.75);
     expect(snapshot.resetAt, isNotNull);
+  });
+
+  test('reads the official Sub2API wallet balance endpoint', () async {
+    final mock = MockClient((request) async {
+      expect(request.url.path, '/v1/usage');
+      expect(request.headers['Authorization'], 'Bearer sub-key');
+      return http.Response(
+        jsonEncode({
+          'mode': 'unrestricted',
+          'isValid': true,
+          'planName': 'Wallet balance',
+          'remaining': 19642.83089036,
+          'balance': 19642.83089036,
+          'unit': 'USD',
+        }),
+        200,
+      );
+    });
+
+    final snapshot = await QuotaClient(client: mock).refresh(
+      MonitorAccount.sub2ApiDefault().copyWith(
+        baseUrl: 'https://sub2api.example.test',
+      ),
+      'sub-key',
+    );
+
+    expect(snapshot.remaining, 19642.83089036);
+    expect(snapshot.unit, 'USD');
+    expect(snapshot.message, contains('Sub2API'));
+  });
+
+  test(
+    'auto-detects Sub2API usage for an existing OpenAI-compatible account',
+    () async {
+      final mock = MockClient((request) async {
+        expect(request.url.path, '/v1/usage');
+        return http.Response(
+          jsonEncode({
+            'mode': 'unrestricted',
+            'remaining': 42.5,
+            'balance': 42.5,
+            'unit': 'USD',
+          }),
+          200,
+        );
+      });
+
+      final snapshot = await QuotaClient(client: mock).refresh(
+        MonitorAccount.amdDefault().copyWith(
+          baseUrl: 'https://sub2api.example.test',
+        ),
+        'sub-key',
+      );
+
+      expect(snapshot.remaining, 42.5);
+      expect(snapshot.unit, 'USD');
+    },
+  );
+
+  test('reads Sub2API key quota mode with a base URL ending in v1', () async {
+    final resetAt = DateTime.utc(2026, 8, 13, 0);
+    final mock = MockClient((request) async {
+      expect(request.url.path, '/v1/usage');
+      return http.Response(
+        jsonEncode({
+          'mode': 'quota_limited',
+          'remaining': 7,
+          'unit': 'USD',
+          'quota': {
+            'limit': 10,
+            'used': 3,
+            'remaining': 7,
+            'unit': 'USD',
+            'reset_at': resetAt.toIso8601String(),
+          },
+        }),
+        200,
+      );
+    });
+
+    final snapshot = await QuotaClient(client: mock).refresh(
+      MonitorAccount.sub2ApiDefault().copyWith(
+        baseUrl: 'https://sub2api.example.test/v1',
+      ),
+      'sub-key',
+    );
+
+    expect(snapshot.remaining, 7);
+    expect(snapshot.limit, 10);
+    expect(snapshot.used, 3);
+    expect(snapshot.remainingRatio, 0.7);
+    expect(snapshot.resetAt?.toUtc(), resetAt);
   });
 
   test(
