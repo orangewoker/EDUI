@@ -33,6 +33,17 @@ runner.build_configurations.each do |config|
   config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '17.0'
 end
 
+# Flutter's "Thin Binary" phase reads the finished Runner.app. Embedding the
+# extension after that phase creates an Xcode dependency cycle, so keep the
+# extension copy phase immediately before Thin Binary.
+embed_phase = runner.copy_files_build_phases.find { |phase| phase.name == 'Embed Foundation Extensions' }
+if embed_phase
+  phases = runner.build_phases
+  phases.delete(embed_phase)
+  thin_index = phases.index { |phase| phase.respond_to?(:name) && phase.name == 'Thin Binary' }
+  phases.insert(thin_index || phases.length, embed_phase)
+end
+
 widget.build_configurations.each do |config|
   settings = config.build_settings
   settings['APPLICATION_EXTENSION_API_ONLY'] = 'YES'
