@@ -8,6 +8,12 @@ project = Xcodeproj::Project.open(project_path)
 runner = project.targets.find { |target| target.name == 'Runner' }
 abort 'Runner target not found' unless runner
 
+pubspec_path = File.expand_path('../pubspec.yaml', __dir__)
+full_version = File.read(pubspec_path)[/^version:\s*([^\s]+)/, 1]
+abort 'Version not found in pubspec.yaml' unless full_version
+app_version, build_number = full_version.split('+', 2)
+abort 'Build number not found in pubspec.yaml version' unless build_number
+
 widget = project.targets.find { |target| target.name == 'EDUIWidget' }
 group = project.main_group.find_subpath('EDUIWidget', true)
 group.set_source_tree('<group>')
@@ -48,11 +54,13 @@ widget.build_configurations.each do |config|
   settings['APPLICATION_EXTENSION_API_ONLY'] = 'YES'
   settings.delete('CODE_SIGN_ENTITLEMENTS')
   settings['CODE_SIGN_STYLE'] = 'Automatic'
-  settings['CURRENT_PROJECT_VERSION'] = '$(FLUTTER_BUILD_NUMBER)'
+  # Widget targets do not inherit Flutter/Generated.xcconfig. Use literal
+  # values so ProcessInfoPlistFile always writes both required version keys.
+  settings['CURRENT_PROJECT_VERSION'] = build_number
   settings['GENERATE_INFOPLIST_FILE'] = 'NO'
   settings['INFOPLIST_FILE'] = 'EDUIWidget/Info.plist'
   settings['IPHONEOS_DEPLOYMENT_TARGET'] = '17.0'
-  settings['MARKETING_VERSION'] = '$(FLUTTER_BUILD_NAME)'
+  settings['MARKETING_VERSION'] = app_version
   settings['PRODUCT_BUNDLE_IDENTIFIER'] = 'com.orangewoker.edui.widget'
   settings['PRODUCT_NAME'] = '$(TARGET_NAME)'
   settings['SKIP_INSTALL'] = 'YES'
