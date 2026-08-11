@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'app_controller.dart';
 import 'models/monitor_account.dart';
 import 'models/quota_snapshot.dart';
+import 'services/login_launcher.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -135,6 +136,11 @@ class DashboardPage extends StatelessWidget {
                               account.id,
                             ),
                             onRefresh: () => controller.refreshOne(account),
+                            onLogin:
+                                account.appUrl.isEmpty &&
+                                    account.loginUrl.isEmpty
+                                ? null
+                                : () => _openLogin(context, account),
                             onEdit: () =>
                                 _openEditor(context, controller, account),
                           ),
@@ -151,6 +157,14 @@ class DashboardPage extends StatelessWidget {
         );
       },
     );
+  }
+
+  Future<void> _openLogin(BuildContext context, MonitorAccount account) async {
+    final opened = await const LoginLauncher().open(account);
+    if (!context.mounted || opened) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('无法打开官方 App 或登录网页')));
   }
 
   Future<void> _openEditor(
@@ -231,6 +245,7 @@ class _AccountCard extends StatelessWidget {
     required this.error,
     required this.refreshing,
     required this.onRefresh,
+    required this.onLogin,
     required this.onEdit,
   });
   final MonitorAccount account;
@@ -238,6 +253,7 @@ class _AccountCard extends StatelessWidget {
   final String? error;
   final bool refreshing;
   final VoidCallback onRefresh;
+  final VoidCallback? onLogin;
   final VoidCallback onEdit;
 
   @override
@@ -284,6 +300,12 @@ class _AccountCard extends StatelessWidget {
                       ],
                     ),
                   ),
+                  if (onLogin != null)
+                    IconButton(
+                      tooltip: '打开官方登录',
+                      onPressed: onLogin,
+                      icon: const Icon(Icons.login_rounded),
+                    ),
                   IconButton(
                     tooltip: '刷新',
                     onPressed: refreshing ? null : onRefresh,
@@ -375,14 +397,20 @@ class AccountEditor extends StatefulWidget {
 
 class _AccountEditorState extends State<AccountEditor> {
   late ProviderType type;
+  late AuthenticationType authenticationType;
+  late MetricValueMode metricValueMode;
   late final TextEditingController name;
   late final TextEditingController baseUrl;
   late final TextEditingController model;
   late final TextEditingController endpoint;
   late final TextEditingController balanceField;
   late final TextEditingController limitField;
+  late final TextEditingController resetField;
   late final TextEditingController unit;
-  final apiKey = TextEditingController();
+  late final TextEditingController budgetLimit;
+  late final TextEditingController appUrl;
+  late final TextEditingController loginUrl;
+  final credential = TextEditingController();
   bool saving = false;
   bool hasStoredKey = false;
 
@@ -391,6 +419,8 @@ class _AccountEditorState extends State<AccountEditor> {
     super.initState();
     final value = widget.initial ?? MonitorAccount.amdDefault();
     type = value.providerType;
+    authenticationType = value.authenticationType;
+    metricValueMode = value.metricValueMode;
     name = TextEditingController(
       text: widget.initial?.name ?? 'AMD Radeon API',
     );
@@ -399,9 +429,15 @@ class _AccountEditorState extends State<AccountEditor> {
     endpoint = TextEditingController(text: value.endpointPath);
     balanceField = TextEditingController(text: value.balanceField);
     limitField = TextEditingController(text: value.limitField);
+    resetField = TextEditingController(text: value.resetField);
     unit = TextEditingController(text: value.unit);
+    budgetLimit = TextEditingController(
+      text: value.budgetLimit == null ? '' : '${value.budgetLimit}',
+    );
+    appUrl = TextEditingController(text: value.appUrl);
+    loginUrl = TextEditingController(text: value.loginUrl);
     if (widget.initial != null) {
-      widget.controller.hasApiKey(widget.initial!.id).then((value) {
+      widget.controller.hasCredential(widget.initial!).then((value) {
         if (mounted) setState(() => hasStoredKey = value);
       });
     }
@@ -416,8 +452,12 @@ class _AccountEditorState extends State<AccountEditor> {
       endpoint,
       balanceField,
       limitField,
+      resetField,
       unit,
-      apiKey,
+      budgetLimit,
+      appUrl,
+      loginUrl,
+      credential,
     ]) {
       item.dispose();
     }
@@ -428,6 +468,8 @@ class _AccountEditorState extends State<AccountEditor> {
   Widget build(BuildContext context) {
     final custom = type == ProviderType.customJson;
     final openAI = type == ProviderType.amdRadeon;
+    final officialOpenAI = type == ProviderType.openAI;
+    final cookie = authenticationType == AuthenticationType.manualCookie;
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.initial == null ? '添加监控' : '编辑监控'),
@@ -444,7 +486,36 @@ class _AccountEditorState extends State<AccountEditor> {
           math.max(MediaQuery.paddingOf(context).bottom, 24),
         ),
         children: [
+          Text(
+            '快速配置',
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              OutlinedButton.icon(
+                onPressed: () => _applyPreset(
+                  MonitorAccount.openAIDefault(id: 'editor-preview'),
+                ),
+                icon: const Icon(Icons.auto_awesome_rounded),
+                label: const Text('OpenAI API'),
+              ),
+              OutlinedButton.icon(
+                onPressed: () => _applyPreset(
+                  MonitorAccount.codexDefault(id: 'editor-preview'),
+                ),
+                icon: const Icon(Icons.code_rounded),
+                label: const Text('Codex 订阅'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
           DropdownButtonFormField<ProviderType>(
+            key: ValueKey(type),
             initialValue: type,
             decoration: const InputDecoration(
               labelText: '服务类型',
@@ -458,14 +529,46 @@ class _AccountEditorState extends State<AccountEditor> {
               if (value == null) return;
               setState(() {
                 type = value;
+                if (value != ProviderType.customJson) {
+                  authenticationType = AuthenticationType.apiKey;
+                }
                 if (value == ProviderType.deepSeek) {
                   baseUrl.text = 'https://api.deepseek.com';
                   name.text = 'DeepSeek';
+                  appUrl.text = 'https://chat.deepseek.com/';
+                  loginUrl.text = 'https://platform.deepseek.com/';
+                } else if (value == ProviderType.openAI) {
+                  _setFields(
+                    MonitorAccount.openAIDefault(id: 'editor-preview'),
+                  );
                 }
               });
             },
           ),
           const SizedBox(height: 14),
+          if (custom) ...[
+            DropdownButtonFormField<AuthenticationType>(
+              key: ValueKey(authenticationType),
+              initialValue: authenticationType,
+              decoration: const InputDecoration(
+                labelText: '登录凭证',
+                border: OutlineInputBorder(),
+              ),
+              items: [
+                for (final value in AuthenticationType.values)
+                  DropdownMenuItem(value: value, child: Text(value.label)),
+              ],
+              onChanged: (value) {
+                if (value != null) {
+                  setState(() {
+                    authenticationType = value;
+                    hasStoredKey = false;
+                  });
+                }
+              },
+            ),
+            const SizedBox(height: 14),
+          ],
           _field(name, '显示名称'),
           _field(baseUrl, 'API Base URL', keyboard: TextInputType.url),
           if (openAI)
@@ -478,24 +581,90 @@ class _AccountEditorState extends State<AccountEditor> {
                 subtitle: Text('EDUI 会读取 /models，并自动尝试可用模型，无需手动填写。'),
               ),
             ),
+          if (officialOpenAI)
+            _field(
+              budgetLimit,
+              '月预算上限（可选）',
+              helper: '填写后显示预算余额和进度；留空则显示最近 30 天已用',
+              keyboard: const TextInputType.numberWithOptions(decimal: true),
+            ),
           if (custom) ...[
             _field(endpoint, '接口路径', helper: '例如 /api/user/self'),
             _field(balanceField, '剩余额度字段', helper: '支持 data.quota 这类点号路径'),
             _field(limitField, '总额度字段（可选）'),
+            DropdownButtonFormField<MetricValueMode>(
+              key: ValueKey(metricValueMode),
+              initialValue: metricValueMode,
+              decoration: const InputDecoration(
+                labelText: '额度字段含义',
+                border: OutlineInputBorder(),
+              ),
+              items: [
+                for (final value in MetricValueMode.values)
+                  DropdownMenuItem(value: value, child: Text(value.label)),
+              ],
+              onChanged: (value) {
+                if (value != null) setState(() => metricValueMode = value);
+              },
+            ),
+            const SizedBox(height: 14),
+            _field(
+              resetField,
+              '重置时间字段（可选）',
+              helper: '支持 Unix 秒、Unix 毫秒或 ISO 8601 时间',
+            ),
             _field(unit, '单位'),
           ],
+          if (custom || appUrl.text.isNotEmpty || loginUrl.text.isNotEmpty) ...[
+            _field(
+              appUrl,
+              '官方 App Link（可选）',
+              helper: '优先尝试 Universal Link 或官方 App URL Scheme',
+              keyboard: TextInputType.url,
+            ),
+            _field(
+              loginUrl,
+              '网页登录地址（可选）',
+              helper: '未安装官方 App 时自动回退到这里',
+              keyboard: TextInputType.url,
+            ),
+            OutlinedButton.icon(
+              onPressed: _openOfficialLogin,
+              icon: const Icon(Icons.open_in_new_rounded),
+              label: const Text('打开官方 App / 网页登录'),
+            ),
+            const SizedBox(height: 14),
+          ],
+          if (cookie)
+            const Padding(
+              padding: EdgeInsets.only(bottom: 14),
+              child: ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(Icons.info_outline_rounded),
+                title: Text('网页登录不会把 Cookie 自动交给 EDUI'),
+                subtitle: Text(
+                  '请从你自己的已登录浏览器复制完整 Cookie；Cookie 只保存到 iOS Keychain。Codex 模板使用实验性额度接口，失效时可直接修改接口和字段。',
+                ),
+              ),
+            ),
           TextField(
-            controller: apiKey,
+            controller: credential,
             obscureText: true,
             autocorrect: false,
             enableSuggestions: false,
             decoration: InputDecoration(
-              labelText: 'API Key',
+              labelText: cookie ? 'Cookie' : 'API Key',
               helperText: hasStoredKey
                   ? '已安全保存；留空表示不修改'
+                  : cookie
+                  ? '粘贴完整 Cookie Header，保存在 iOS Keychain'
+                  : type == ProviderType.openAI
+                  ? 'OpenAI Costs API 需要组织 Admin API Key'
                   : '保存在 iOS Keychain，不写入小组件数据',
               border: const OutlineInputBorder(),
-              prefixIcon: const Icon(Icons.key_rounded),
+              prefixIcon: Icon(
+                cookie ? Icons.cookie_outlined : Icons.key_rounded,
+              ),
             ),
           ),
           const SizedBox(height: 22),
@@ -544,6 +713,58 @@ class _AccountEditorState extends State<AccountEditor> {
     ),
   );
 
+  void _setFields(MonitorAccount value) {
+    type = value.providerType;
+    authenticationType = value.authenticationType;
+    name.text = value.name;
+    baseUrl.text = value.baseUrl;
+    model.text = value.model;
+    endpoint.text = value.endpointPath;
+    balanceField.text = value.balanceField;
+    limitField.text = value.limitField;
+    resetField.text = value.resetField;
+    metricValueMode = value.metricValueMode;
+    unit.text = value.unit;
+    budgetLimit.text = value.budgetLimit == null ? '' : '${value.budgetLimit}';
+    appUrl.text = value.appUrl;
+    loginUrl.text = value.loginUrl;
+  }
+
+  void _applyPreset(MonitorAccount value) {
+    setState(() {
+      _setFields(value);
+      hasStoredKey = false;
+    });
+  }
+
+  MonitorAccount _draftAccount(String id) => MonitorAccount(
+    id: id,
+    name: name.text.trim(),
+    providerType: type,
+    baseUrl: baseUrl.text.trim(),
+    authenticationType: authenticationType,
+    model: type == ProviderType.amdRadeon ? '' : model.text.trim(),
+    endpointPath: endpoint.text.trim(),
+    balanceField: balanceField.text.trim(),
+    limitField: limitField.text.trim(),
+    resetField: resetField.text.trim(),
+    metricValueMode: metricValueMode,
+    unit: unit.text.trim().isEmpty ? 'USD' : unit.text.trim(),
+    budgetLimit: double.tryParse(budgetLimit.text.trim()),
+    appUrl: appUrl.text.trim(),
+    loginUrl: loginUrl.text.trim(),
+  );
+
+  Future<void> _openOfficialLogin() async {
+    final opened = await const LoginLauncher().open(
+      _draftAccount(widget.initial?.id ?? 'editor-preview'),
+    );
+    if (!mounted || opened) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('无法打开官方 App 或登录网页')));
+  }
+
   Future<void> _save() async {
     if (name.text.trim().isEmpty || baseUrl.text.trim().isEmpty) {
       ScaffoldMessenger.of(
@@ -555,21 +776,12 @@ class _AccountEditorState extends State<AccountEditor> {
     final id =
         widget.initial?.id ??
         'account-${DateTime.now().millisecondsSinceEpoch}';
-    final account = MonitorAccount(
-      id: id,
-      name: name.text.trim(),
-      providerType: type,
-      baseUrl: baseUrl.text.trim(),
-      model: type == ProviderType.amdRadeon ? '' : model.text.trim(),
-      endpointPath: endpoint.text.trim(),
-      balanceField: balanceField.text.trim(),
-      limitField: limitField.text.trim(),
-      unit: unit.text.trim().isEmpty ? 'USD' : unit.text.trim(),
-    );
-    await widget.controller.saveAccount(account, apiKey.text);
+    final account = _draftAccount(id);
+    await widget.controller.saveAccount(account, credential.text);
+    final canRefresh = await widget.controller.hasCredential(account);
     if (!mounted) return;
     Navigator.pop(context);
-    if (apiKey.text.trim().isNotEmpty || hasStoredKey) {
+    if (canRefresh) {
       await widget.controller.refreshOne(account);
     }
   }
@@ -596,7 +808,7 @@ class _WidgetHelp extends StatelessWidget {
             SizedBox(width: 12),
             Expanded(
               child: Text(
-                '长按 iPhone 桌面 → 编辑 → 添加小组件 → 搜索 EDUI。添加后长按 EDUI 小组件并选择“编辑小组件”，填写 API Key。',
+                '长按 iPhone 桌面 → 编辑 → 添加小组件 → 搜索 EDUI。添加后长按小组件并选择“编辑小组件”，即可选择账户和“液态玻璃 / 白色”外观。',
               ),
             ),
           ],

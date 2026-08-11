@@ -40,9 +40,10 @@ class AppController extends ChangeNotifier {
     return null;
   }
 
-  Future<bool> hasApiKey(String accountId) => _store.hasApiKey(accountId);
+  Future<bool> hasCredential(MonitorAccount account) =>
+      _store.hasCredential(account);
 
-  Future<void> saveAccount(MonitorAccount account, String apiKey) async {
+  Future<void> saveAccount(MonitorAccount account, String credential) async {
     final index = accounts.indexWhere((item) => item.id == account.id);
     if (index < 0) {
       accounts = [...accounts, account];
@@ -52,7 +53,7 @@ class AppController extends ChangeNotifier {
       accounts = updated;
     }
     await _store.saveAccounts(accounts);
-    await _store.writeApiKey(account.id, apiKey);
+    await _store.writeCredential(account, credential);
     errors.remove(account.id);
     notifyListeners();
   }
@@ -76,8 +77,8 @@ class AppController extends ChangeNotifier {
     errors.remove(account.id);
     notifyListeners();
     try {
-      final apiKey = await _store.readApiKey(account.id);
-      final snapshot = await _client.refresh(account, apiKey);
+      final credential = await _store.readCredential(account);
+      final snapshot = await _client.refresh(account, credential);
       snapshots = [
         snapshot,
         ...snapshots.where((item) => item.accountId != account.id),

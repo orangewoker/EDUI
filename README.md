@@ -6,10 +6,18 @@ EDUI 是一款面向 iPhone 的模型额度监控工具。它可以读取模型�
 
 - AMD Radeon API/OpenAI 兼容服务：通过最小聊天请求读取 `x-ratelimit-*` 响应头。
 - DeepSeek：通过官方 `/user/balance` 接口读取余额。
-- 自定义 JSON：支持自定义 GET 路径及点号字段路径。
+- OpenAI API：通过官方 Organization Costs API 汇总最近 30 天用量；可填写月预算上限以显示剩余额度。
+- 官方账户 / 自定义 JSON：支持 API Key 或手动 Cookie、自定义 GET 路径及点号字段路径。
+- 官方登录跳转：优先使用 Universal Link 打开已安装的官方 App，否则打开网页登录页。
 - iOS 小号、中号和大号 Widget。
-- iOS 26 clear/tinted Liquid Glass 与 accented rendering mode。
+- Widget 可选择“液态玻璃（半透明）”或“纯白”主题，并支持 iOS 26 clear/tinted Liquid Glass 与 accented rendering mode。
 - 主应用 API Key 使用 iOS Keychain 保存；Widget 通过 App Group 读取账户名称和已同步额度快照，不读取 API Key。
+
+## Codex / ChatGPT 订阅
+
+OpenAI 当前没有公开供第三方 App 读取 ChatGPT/Codex 订阅剩余额度的 OAuth 或额度 API。EDUI 提供 Codex 官方登录跳转和手动 Cookie 模板，并预填实验性的 5 小时额度接口、已用百分比换算和重置时间字段；如果站点调整内部接口，可以直接在账户编辑页修改路径和字段。Cookie 只保存在 iOS Keychain，不会写入 Widget 或账户配置。
+
+OpenAI API 组织账户不需要 Cookie。请使用组织 Admin API Key 调用官方 Costs API；普通项目 API Key通常没有读取组织成本的权限。
 
 ## AMD Radeon API
 
@@ -32,10 +40,10 @@ Windows 不能构建 iOS App。推送 `ios` 分支后，GitHub Actions 会使用
 
 ## Widget 配置
 
-添加 EDUI Widget 后，长按小组件并选择“编辑小组件”，即可从 EDUI 主应用已经配置的账户中选择一个或全部账户。请先在主应用保存账户并成功刷新一次。
+添加 EDUI Widget 后，长按小组件并选择“编辑小组件”，即可从 EDUI 主应用已经配置的账户中选择一个或全部账户，并选择“液态玻璃（半透明）”或“纯白”外观。请先在主应用保存账户并成功刷新一次。
 
 ## 安全说明
 
 - 不要将真实 API Key 提交到 Git。
-- Widget 不接触 API Key，只读取 App Group 中的名称和额度快照。
+- Widget 不接触 API Key 或 Cookie，只读取 App Group 中的名称和额度快照。
 - OpenAI 兼容额度探针会产生一次极小的真实 API 请求，因此不适合高频刷新。

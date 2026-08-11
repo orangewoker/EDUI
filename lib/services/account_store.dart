@@ -67,14 +67,40 @@ class AccountStore {
       .read(key: 'api_key.$accountId')
       .then((value) => value ?? '');
 
+  Future<String> readCookie(String accountId) => _secureStorage
+      .read(key: 'cookie.$accountId')
+      .then((value) => value ?? '');
+
+  Future<String> readCredential(MonitorAccount account) =>
+      account.authenticationType == AuthenticationType.manualCookie
+      ? readCookie(account.id)
+      : readApiKey(account.id);
+
   Future<void> writeApiKey(String accountId, String value) async {
     if (value.trim().isEmpty) return;
     await _secureStorage.write(key: 'api_key.$accountId', value: value.trim());
   }
 
+  Future<void> writeCookie(String accountId, String value) async {
+    if (value.trim().isEmpty) return;
+    await _secureStorage.write(key: 'cookie.$accountId', value: value.trim());
+  }
+
+  Future<void> writeCredential(MonitorAccount account, String value) =>
+      account.authenticationType == AuthenticationType.manualCookie
+      ? writeCookie(account.id, value)
+      : writeApiKey(account.id, value);
+
   Future<bool> hasApiKey(String accountId) async =>
       (await readApiKey(accountId)).isNotEmpty;
 
-  Future<void> deleteAccountSecrets(String accountId) =>
-      _secureStorage.delete(key: 'api_key.$accountId');
+  Future<bool> hasCredential(MonitorAccount account) async =>
+      (await readCredential(account)).isNotEmpty;
+
+  Future<void> deleteAccountSecrets(String accountId) async {
+    await Future.wait([
+      _secureStorage.delete(key: 'api_key.$accountId'),
+      _secureStorage.delete(key: 'cookie.$accountId'),
+    ]);
+  }
 }

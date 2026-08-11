@@ -11,6 +11,17 @@ private var appGroupId: String {
     return groups?.first(where: { $0.contains(baseAppGroupId) }) ?? baseAppGroupId
 }
 
+enum WidgetAppearance: String, AppEnum, Sendable {
+    case liquidGlass
+    case white
+
+    static var typeDisplayRepresentation: TypeDisplayRepresentation = "小组件外观"
+    static var caseDisplayRepresentations: [WidgetAppearance: DisplayRepresentation] = [
+        .liquidGlass: "液态玻璃（半透明）",
+        .white: "纯白"
+    ]
+}
+
 struct MonitorAccountEntity: AppEntity, Codable, Hashable, Sendable {
     static var typeDisplayRepresentation: TypeDisplayRepresentation = "监控账户"
     static var defaultQuery = MonitorAccountQuery()
@@ -82,6 +93,7 @@ struct QuotaEntry: TimelineEntry {
     let date: Date
     let items: [QuotaItem]
     let message: String?
+    let appearance: WidgetAppearance
 }
 
 struct QuotaWidgetConfiguration: WidgetConfigurationIntent {
@@ -91,14 +103,18 @@ struct QuotaWidgetConfiguration: WidgetConfigurationIntent {
     @Parameter(title: "监控账户")
     var account: MonitorAccountEntity?
 
+    @Parameter(title: "外观", default: .liquidGlass)
+    var appearance: WidgetAppearance
+
     init() {
         account = nil
+        appearance = .liquidGlass
     }
 }
 
 struct QuotaTimelineProvider: AppIntentTimelineProvider {
     func placeholder(in context: Context) -> QuotaEntry {
-        QuotaEntry(date: .now, items: [previewItem], message: nil)
+        QuotaEntry(date: .now, items: [previewItem], message: nil, appearance: .liquidGlass)
     }
 
     func snapshot(
@@ -138,7 +154,12 @@ struct QuotaTimelineProvider: AppIntentTimelineProvider {
         let selectedId = configuration.account?.id
             ?? MonitorAccountQuery.loadAccounts().dropFirst().first?.id
         guard let selectedId else {
-            return QuotaEntry(date: .now, items: [], message: "请先在 EDUI 中添加监控账户")
+            return QuotaEntry(
+                date: .now,
+                items: [],
+                message: "请先在 EDUI 中添加监控账户",
+                appearance: configuration.appearance
+            )
         }
         guard
             let defaults = UserDefaults(suiteName: appGroupId),
@@ -146,7 +167,12 @@ struct QuotaTimelineProvider: AppIntentTimelineProvider {
             let data = raw.data(using: .utf8),
             let allItems = try? JSONDecoder().decode([QuotaItem].self, from: data)
         else {
-            return QuotaEntry(date: .now, items: [], message: "打开 EDUI 并刷新账户后再添加小组件")
+            return QuotaEntry(
+                date: .now,
+                items: [],
+                message: "打开 EDUI 并刷新账户后再添加小组件",
+                appearance: configuration.appearance
+            )
         }
         let items = selectedId == "__all__"
             ? allItems
@@ -154,7 +180,8 @@ struct QuotaTimelineProvider: AppIntentTimelineProvider {
         return QuotaEntry(
             date: .now,
             items: items,
-            message: items.isEmpty ? "该账户还没有同步数据" : nil
+            message: items.isEmpty ? "该账户还没有同步数据" : nil,
+            appearance: configuration.appearance
         )
     }
 }
@@ -174,13 +201,24 @@ struct EDUIWidgetView: View {
                 listView(limit: family == .systemLarge ? 5 : 3)
             }
         }
+        .environment(\.colorScheme, entry.appearance == .white ? .light : .dark)
         .containerBackground(for: .widget) {
             if renderingMode == .fullColor {
-                LinearGradient(
-                    colors: [Color(red: 0.15, green: 0.18, blue: 0.38), Color(red: 0.38, green: 0.25, blue: 0.68)],
-                    startPoint: .topLeading,
-                    endPoint: .bottomTrailing
-                )
+                if entry.appearance == .white {
+                    Color.white
+                } else {
+                    ZStack {
+                        Color.white.opacity(0.13)
+                        LinearGradient(
+                            colors: [
+                                Color(red: 0.38, green: 0.52, blue: 1.0).opacity(0.24),
+                                Color(red: 0.72, green: 0.46, blue: 1.0).opacity(0.18)
+                            ],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    }
+                }
             } else {
                 Color.clear
             }

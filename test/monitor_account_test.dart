@@ -3,15 +3,29 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   test('monitor account list round trips without secrets', () {
-    final original = [MonitorAccount.amdDefault()];
+    final original = [
+      MonitorAccount.amdDefault(),
+      MonitorAccount.codexDefault(id: 'codex'),
+    ];
     final restored = MonitorAccount.decodeList(
       MonitorAccount.encodeList(original),
     );
 
-    expect(restored, hasLength(1));
-    expect(restored.single.name, 'AMD Radeon API');
-    expect(restored.single.providerType, ProviderType.amdRadeon);
-    expect(restored.single.model, isEmpty);
-    expect(MonitorAccount.encodeList(original), isNot(contains('apiKey')));
+    expect(restored, hasLength(2));
+    expect(restored.first.name, 'AMD Radeon API');
+    expect(restored.first.providerType, ProviderType.amdRadeon);
+    expect(restored.first.model, isEmpty);
+    expect(restored.last.authenticationType, AuthenticationType.manualCookie);
+    expect(restored.last.loginUrl, 'https://chatgpt.com/auth/login');
+    expect(restored.last.endpointPath, '/backend-api/wham/usage');
+    expect(restored.last.metricValueMode, MetricValueMode.usedPercent);
+    expect(
+      MonitorAccount.encodeList(original),
+      isNot(contains('secret-api-key-value')),
+    );
+    expect(
+      MonitorAccount.encodeList(original),
+      isNot(contains('session=secret-cookie-value')),
+    );
   });
 }

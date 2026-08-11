@@ -10,14 +10,80 @@ class QuotaClient {
 
   final http.Client _client;
 
-  Future<QuotaSnapshot> refresh(MonitorAccount account, String apiKey) async {
-    final key = apiKey.trim();
-    if (key.isEmpty) throw const QuotaException('请先填写 API Key');
+  Future<QuotaSnapshot> refresh(
+    MonitorAccount account,
+    String credential,
+  ) async {
+    final key = credential.trim();
+    if (key.isEmpty) {
+      throw QuotaException(
+        account.authenticationType == AuthenticationType.manualCookie
+            ? '请先填写 Cookie'
+            : '请先填写 API Key',
+      );
+    }
     return switch (account.providerType) {
+      ProviderType.openAI => _refreshOpenAI(account, key),
       ProviderType.amdRadeon => _refreshOpenAICompatible(account, key),
       ProviderType.deepSeek => _refreshDeepSeek(account, key),
       ProviderType.customJson => _refreshCustom(account, key),
     };
+  }
+
+  Future<QuotaSnapshot> _refreshOpenAI(
+    MonitorAccount account,
+    String adminKey,
+  ) async {
+    final now = DateTime.now();
+    final startTime = now.subtract(const Duration(days: 30));
+    final uri = _endpoint(account.baseUrl, 'organization/costs').replace(
+      queryParameters: {
+        'start_time': '${startTime.millisecondsSinceEpoch ~/ 1000}',
+        'end_time': '${now.millisecondsSinceEpoch ~/ 1000}',
+        'bucket_width': '1d',
+        'limit': '30',
+      },
+    );
+    final response = await _client
+        .get(uri, headers: _headers(account, adminKey))
+        .timeout(const Duration(seconds: 30));
+    _requireSuccess(response);
+    final body = jsonDecode(response.body);
+    final buckets = body is Map ? body['data'] : null;
+    if (buckets is! List) {
+      throw const QuotaException('OpenAI Costs 响应缺少 data');
+    }
+    var total = 0.0;
+    String currency = 'usd';
+    for (final bucket in buckets.whereType<Map>()) {
+      final results = bucket['results'];
+      if (results is! List) continue;
+      for (final result in results.whereType<Map>()) {
+        final amount = result['amount'];
+        if (amount is! Map) continue;
+        total += double.tryParse('${amount['value'] ?? ''}') ?? 0;
+        final valueCurrency = '${amount['currency'] ?? ''}'.trim();
+        if (valueCurrency.isNotEmpty) currency = valueCurrency;
+      }
+    }
+    final budget = account.budgetLimit;
+    final hasBudget = budget != null && budget > 0;
+    return QuotaSnapshot(
+      accountId: account.id,
+      accountName: account.name,
+      remaining: hasBudget
+          ? (budget - total).clamp(0.0, budget).toDouble()
+          : total,
+      limit: hasBudget ? budget : null,
+      used: total,
+      unit: hasBudget
+          ? currency.toUpperCase()
+          : '${currency.toUpperCase()}/30天已用',
+      updatedAt: now,
+      message: hasBudget
+          ? '按设置的预算减去 OpenAI 官方 Costs API 最近 30 天用量'
+          : '通过 OpenAI 官方 Costs API 汇总最近 30 天用量',
+    );
   }
 
   Future<QuotaSnapshot> _refreshOpenAICompatible(
@@ -51,7 +117,7 @@ class QuotaClient {
     final response = await _client
         .post(
           uri,
-          headers: _headers(apiKey),
+          headers: _headers(account, apiKey),
           body: jsonEncode({
             'model': model,
             'messages': const [
@@ -99,7 +165,7 @@ class QuotaClient {
 
   Future<List<String>> _availableModels(String baseUrl, String apiKey) async {
     final response = await _client
-        .get(_endpoint(baseUrl, 'models'), headers: _headers(apiKey))
+        .get(_endpoint(baseUrl, 'models'), headers: _apiKeyHeaders(apiKey))
         .timeout(const Duration(seconds: 30));
     _requireSuccess(response);
     final body = jsonDecode(response.body);
@@ -120,7 +186,7 @@ class QuotaClient {
     final response = await _client
         .get(
           _endpoint(account.baseUrl, 'user/balance'),
-          headers: _headers(apiKey),
+          headers: _headers(account, apiKey),
         )
         .timeout(const Duration(seconds: 30));
     _requireSuccess(response);
@@ -149,30 +215,62 @@ class QuotaClient {
     final response = await _client
         .get(
           _endpoint(account.baseUrl, account.endpointPath),
-          headers: _headers(apiKey),
+          headers: _headers(account, apiKey),
         )
         .timeout(const Duration(seconds: 30));
     _requireSuccess(response);
     final body = jsonDecode(response.body);
-    final remaining = _numberAt(body, account.balanceField);
-    final limit = account.limitField.trim().isEmpty
+    final rawValue = _numberAt(body, account.balanceField);
+    var limit = account.limitField.trim().isEmpty
         ? null
         : _numberAt(body, account.limitField);
-    if (remaining == null) {
+    if (rawValue == null) {
       throw QuotaException('无法读取字段：${account.balanceField}');
+    }
+    late final double remaining;
+    late final double? used;
+    switch (account.metricValueMode) {
+      case MetricValueMode.remaining:
+        remaining = rawValue;
+        used = limit == null ? null : limit - remaining;
+        break;
+      case MetricValueMode.used:
+        if (limit == null) {
+          throw const QuotaException('额度字段是已用额度时，必须配置总额度字段');
+        }
+        used = rawValue;
+        remaining = (limit - used).clamp(0.0, limit).toDouble();
+        break;
+      case MetricValueMode.usedPercent:
+        limit = 100;
+        used = rawValue.clamp(0.0, 100.0).toDouble();
+        remaining = 100 - used;
+        break;
     }
     return QuotaSnapshot(
       accountId: account.id,
       accountName: account.name,
       remaining: remaining,
       limit: limit,
-      used: limit == null ? null : limit - remaining,
+      used: used,
       unit: account.unit,
       updatedAt: DateTime.now(),
+      resetAt: account.resetField.trim().isEmpty
+          ? null
+          : _dateAt(body, account.resetField),
     );
   }
 
-  Map<String, String> _headers(String apiKey) => {
+  Map<String, String> _headers(MonitorAccount account, String credential) =>
+      account.authenticationType == AuthenticationType.manualCookie
+      ? {
+          'Cookie': credential,
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+        }
+      : _apiKeyHeaders(credential);
+
+  Map<String, String> _apiKeyHeaders(String apiKey) => {
     'Authorization': 'Bearer $apiKey',
     'Accept': 'application/json',
     'Content-Type': 'application/json',
@@ -219,6 +317,29 @@ class QuotaClient {
       int.tryParse(headers[name]?.split('.').first ?? '');
 
   double? _numberAt(dynamic source, String path) {
+    final current = _valueAt(source, path);
+    return current is num ? current.toDouble() : double.tryParse('$current');
+  }
+
+  DateTime? _dateAt(dynamic source, String path) {
+    final value = _valueAt(source, path);
+    if (value is num) {
+      final raw = value.toInt();
+      return DateTime.fromMillisecondsSinceEpoch(
+        raw.abs() >= 100000000000 ? raw : raw * 1000,
+      );
+    }
+    final raw = '$value'.trim();
+    final numeric = int.tryParse(raw);
+    if (numeric != null) {
+      return DateTime.fromMillisecondsSinceEpoch(
+        numeric.abs() >= 100000000000 ? numeric : numeric * 1000,
+      );
+    }
+    return DateTime.tryParse(raw);
+  }
+
+  dynamic _valueAt(dynamic source, String path) {
     dynamic current = source;
     for (final segment in path.split('.').where((item) => item.isNotEmpty)) {
       if (current is Map && current.containsKey(segment)) {
@@ -231,7 +352,7 @@ class QuotaClient {
         return null;
       }
     }
-    return current is num ? current.toDouble() : double.tryParse('$current');
+    return current;
   }
 }
 

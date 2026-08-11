@@ -7,6 +7,75 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 void main() {
+  test('reads OpenAI organization costs with an admin key', () async {
+    final mock = MockClient((request) async {
+      expect(request.url.path, '/v1/organization/costs');
+      expect(request.url.queryParameters['bucket_width'], '1d');
+      expect(request.headers['Authorization'], 'Bearer admin-secret');
+      return http.Response(
+        jsonEncode({
+          'data': [
+            {
+              'results': [
+                {
+                  'amount': {'value': 1.25, 'currency': 'usd'},
+                },
+              ],
+            },
+            {
+              'results': [
+                {
+                  'amount': {'value': 0.75, 'currency': 'usd'},
+                },
+              ],
+            },
+          ],
+        }),
+        200,
+      );
+    });
+
+    final snapshot = await QuotaClient(
+      client: mock,
+    ).refresh(MonitorAccount.openAIDefault(), 'admin-secret');
+
+    expect(snapshot.remaining, 2);
+    expect(snapshot.used, 2);
+    expect(snapshot.unit, 'USD/30天已用');
+  });
+
+  test(
+    'calculates remaining OpenAI budget when a limit is configured',
+    () async {
+      final mock = MockClient(
+        (_) async => http.Response(
+          jsonEncode({
+            'data': [
+              {
+                'results': [
+                  {
+                    'amount': {'value': 3.5, 'currency': 'usd'},
+                  },
+                ],
+              },
+            ],
+          }),
+          200,
+        ),
+      );
+
+      final snapshot = await QuotaClient(client: mock).refresh(
+        MonitorAccount.openAIDefault().copyWith(budgetLimit: 10),
+        'admin-secret',
+      );
+
+      expect(snapshot.remaining, 6.5);
+      expect(snapshot.limit, 10);
+      expect(snapshot.used, 3.5);
+      expect(snapshot.remainingRatio, 0.65);
+    },
+  );
+
   test('reads AMD daily USD and RPM quota response headers', () async {
     final mock = MockClient((request) async {
       expect(request.headers['Authorization'], 'Bearer secret');
@@ -110,4 +179,67 @@ void main() {
     expect(snapshot.limit, 100);
     expect(snapshot.used, 76);
   });
+
+  test('uses a manually stored cookie for official JSON accounts', () async {
+    final mock = MockClient((request) async {
+      expect(request.headers['Cookie'], 'session=secret; user=42');
+      expect(request.headers.containsKey('Authorization'), isFalse);
+      return http.Response(
+        jsonEncode({
+          'quota': {'remaining': 62, 'limit': 100},
+        }),
+        200,
+      );
+    });
+    final account = MonitorAccount(
+      id: 'official-web',
+      name: '官方订阅',
+      providerType: ProviderType.customJson,
+      baseUrl: 'https://example.test',
+      authenticationType: AuthenticationType.manualCookie,
+      endpointPath: '/api/quota',
+      balanceField: 'quota.remaining',
+      limitField: 'quota.limit',
+      unit: '%',
+    );
+
+    final snapshot = await QuotaClient(
+      client: mock,
+    ).refresh(account, 'session=secret; user=42');
+
+    expect(snapshot.remaining, 62);
+    expect(snapshot.limit, 100);
+  });
+
+  test(
+    'converts Codex used percent into remaining quota and reset time',
+    () async {
+      final resetAt = DateTime.utc(2026, 8, 12, 8);
+      final mock = MockClient((request) async {
+        expect(request.url.path, '/backend-api/wham/usage');
+        expect(request.headers['Cookie'], 'session=codex-cookie');
+        return http.Response(
+          jsonEncode({
+            'rate_limit': {
+              'primary_window': {
+                'used_percent': 28,
+                'reset_at': resetAt.millisecondsSinceEpoch ~/ 1000,
+              },
+            },
+          }),
+          200,
+        );
+      });
+
+      final snapshot = await QuotaClient(client: mock).refresh(
+        MonitorAccount.codexDefault(id: 'codex'),
+        'session=codex-cookie',
+      );
+
+      expect(snapshot.remaining, 72);
+      expect(snapshot.limit, 100);
+      expect(snapshot.used, 28);
+      expect(snapshot.resetAt, resetAt.toLocal());
+    },
+  );
 }
