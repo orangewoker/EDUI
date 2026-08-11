@@ -137,9 +137,21 @@ class QuotaClient {
       'x-ratelimit-remaining-user-daily-usd',
     );
     final used = _doubleHeader(headers, 'x-ratelimit-used-user-daily-usd');
-    if (remaining == null && limit == null) {
-      throw const QuotaException('服务响应成功，但没有返回额度响应头');
+    final tokenLimit = _doubleHeader(headers, 'x-ratelimit-limit-tokens');
+    final tokenRemaining = _doubleHeader(
+      headers,
+      'x-ratelimit-remaining-tokens',
+    );
+    final requestLimit =
+        _intHeader(headers, 'x-ratelimit-limit-user-rpm') ??
+        _intHeader(headers, 'x-ratelimit-limit-requests');
+    final requestRemaining =
+        _intHeader(headers, 'x-ratelimit-remaining-user-rpm') ??
+        _intHeader(headers, 'x-ratelimit-remaining-requests');
+    if (remaining == null && limit == null && tokenRemaining == null) {
+      throw const QuotaException('服务响应成功，但没有返回可识别的额度头（支持 USD、Token 或请求数）');
     }
+    final tokenQuota = remaining == null && limit == null;
     final resetSeconds = _intHeader(
       headers,
       'x-ratelimit-reset-user-daily-usd',
@@ -147,19 +159,22 @@ class QuotaClient {
     return QuotaSnapshot(
       accountId: account.id,
       accountName: account.name,
-      remaining: remaining ?? ((limit ?? 0) - (used ?? 0)),
-      limit: limit,
-      used:
-          used ??
-          (limit != null && remaining != null ? limit - remaining : null),
-      unit: 'USD/日',
+      remaining: tokenQuota
+          ? tokenRemaining!
+          : remaining ?? ((limit ?? 0) - (used ?? 0)),
+      limit: tokenQuota ? tokenLimit : limit,
+      used: tokenQuota
+          ? (tokenLimit == null ? null : tokenLimit - tokenRemaining!)
+          : used ??
+                (limit != null && remaining != null ? limit - remaining : null),
+      unit: tokenQuota ? 'Tokens' : 'USD/日',
       updatedAt: DateTime.now(),
       resetAt: resetSeconds == null
           ? null
           : DateTime.fromMillisecondsSinceEpoch(resetSeconds * 1000),
-      requestLimit: _intHeader(headers, 'x-ratelimit-limit-user-rpm'),
-      requestRemaining: _intHeader(headers, 'x-ratelimit-remaining-user-rpm'),
-      message: '通过一次最小响应探测读取额度响应头',
+      requestLimit: requestLimit,
+      requestRemaining: requestRemaining,
+      message: tokenQuota ? '服务未提供美元余额，已自动显示 Token 和请求额度' : '通过一次最小响应探测读取额度响应头',
     );
   }
 
@@ -311,10 +326,18 @@ class QuotaClient {
   }
 
   double? _doubleHeader(Map<String, String> headers, String name) =>
-      double.tryParse(headers[name] ?? '');
+      double.tryParse(_header(headers, name) ?? '');
 
   int? _intHeader(Map<String, String> headers, String name) =>
-      int.tryParse(headers[name]?.split('.').first ?? '');
+      int.tryParse(_header(headers, name)?.split('.').first ?? '');
+
+  String? _header(Map<String, String> headers, String name) {
+    final expected = name.toLowerCase();
+    for (final entry in headers.entries) {
+      if (entry.key.toLowerCase() == expected) return entry.value;
+    }
+    return null;
+  }
 
   double? _numberAt(dynamic source, String path) {
     final current = _valueAt(source, path);

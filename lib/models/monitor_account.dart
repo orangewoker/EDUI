@@ -8,7 +8,7 @@ enum ProviderType {
 
   String get label => switch (this) {
     ProviderType.openAI => 'OpenAI API 用量',
-    ProviderType.amdRadeon => 'OpenAI 兼容额度',
+    ProviderType.amdRadeon => 'OpenAI 兼容额度（自动识别）',
     ProviderType.deepSeek => 'DeepSeek 余额',
     ProviderType.customJson => '官方账户 / 自定义 JSON',
   };

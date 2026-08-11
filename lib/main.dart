@@ -588,53 +588,68 @@ class _AccountEditorState extends State<AccountEditor> {
               helper: '填写后显示预算余额和进度；留空则显示最近 30 天已用',
               keyboard: const TextInputType.numberWithOptions(decimal: true),
             ),
-          if (custom) ...[
-            _field(endpoint, '接口路径', helper: '例如 /api/user/self'),
-            _field(balanceField, '剩余额度字段', helper: '支持 data.quota 这类点号路径'),
-            _field(limitField, '总额度字段（可选）'),
-            DropdownButtonFormField<MetricValueMode>(
-              key: ValueKey(metricValueMode),
-              initialValue: metricValueMode,
-              decoration: const InputDecoration(
-                labelText: '额度字段含义',
-                border: OutlineInputBorder(),
-              ),
-              items: [
-                for (final value in MetricValueMode.values)
-                  DropdownMenuItem(value: value, child: Text(value.label)),
+          if (custom)
+            ExpansionTile(
+              tilePadding: EdgeInsets.zero,
+              childrenPadding: const EdgeInsets.only(top: 8),
+              leading: const Icon(Icons.tune_rounded),
+              title: const Text('高级额度字段（一般不用改）'),
+              subtitle: const Text('Codex 站点接口变化时再打开修改'),
+              children: [
+                _field(endpoint, '接口路径', helper: '例如 /api/user/self'),
+                _field(balanceField, '额度字段', helper: '支持 data.quota 这类点号路径'),
+                _field(limitField, '总额度字段（可选）'),
+                DropdownButtonFormField<MetricValueMode>(
+                  key: ValueKey(metricValueMode),
+                  initialValue: metricValueMode,
+                  decoration: const InputDecoration(
+                    labelText: '额度字段含义',
+                    border: OutlineInputBorder(),
+                  ),
+                  items: [
+                    for (final value in MetricValueMode.values)
+                      DropdownMenuItem(value: value, child: Text(value.label)),
+                  ],
+                  onChanged: (value) {
+                    if (value != null) setState(() => metricValueMode = value);
+                  },
+                ),
+                const SizedBox(height: 14),
+                _field(
+                  resetField,
+                  '重置时间字段（可选）',
+                  helper: '支持 Unix 秒、Unix 毫秒或 ISO 8601 时间',
+                ),
+                _field(unit, '单位'),
               ],
-              onChanged: (value) {
-                if (value != null) setState(() => metricValueMode = value);
-              },
             ),
-            const SizedBox(height: 14),
-            _field(
-              resetField,
-              '重置时间字段（可选）',
-              helper: '支持 Unix 秒、Unix 毫秒或 ISO 8601 时间',
-            ),
-            _field(unit, '单位'),
-          ],
-          if (custom || appUrl.text.isNotEmpty || loginUrl.text.isNotEmpty) ...[
-            _field(
-              appUrl,
-              '官方 App Link（可选）',
-              helper: '优先尝试 Universal Link 或官方 App URL Scheme',
-              keyboard: TextInputType.url,
-            ),
-            _field(
-              loginUrl,
-              '网页登录地址（可选）',
-              helper: '未安装官方 App 时自动回退到这里',
-              keyboard: TextInputType.url,
-            ),
+          if (appUrl.text.isNotEmpty || loginUrl.text.isNotEmpty)
             OutlinedButton.icon(
               onPressed: _openOfficialLogin,
               icon: const Icon(Icons.open_in_new_rounded),
               label: const Text('打开官方 App / 网页登录'),
             ),
-            const SizedBox(height: 14),
-          ],
+          if (custom)
+            ExpansionTile(
+              tilePadding: EdgeInsets.zero,
+              childrenPadding: const EdgeInsets.only(top: 8),
+              leading: const Icon(Icons.login_rounded),
+              title: const Text('高级登录设置（一般不用改）'),
+              children: [
+                _field(
+                  appUrl,
+                  '官方 App Link（可选）',
+                  helper: '优先尝试 Universal Link 或官方 App URL Scheme',
+                  keyboard: TextInputType.url,
+                ),
+                _field(
+                  loginUrl,
+                  '网页登录地址（可选）',
+                  helper: '未安装官方 App 时自动回退到这里',
+                  keyboard: TextInputType.url,
+                ),
+              ],
+            ),
           if (cookie)
             const Padding(
               padding: EdgeInsets.only(bottom: 14),

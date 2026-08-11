@@ -123,6 +123,47 @@ void main() {
     expect(snapshot.resetAt, isNotNull);
   });
 
+  test(
+    'falls back to token and request quotas from OpenAI-compatible headers',
+    () async {
+      final mock = MockClient((request) async {
+        if (request.url.path.endsWith('/models')) {
+          return http.Response(
+            jsonEncode({
+              'data': [
+                {'id': 'gpt-4o-mini'},
+              ],
+            }),
+            200,
+          );
+        }
+        return http.Response(
+          jsonEncode({
+            'usage': {'total_tokens': 920},
+          }),
+          200,
+          headers: {
+            'X-Ratelimit-Limit-Tokens': '1000000',
+            'X-Ratelimit-Remaining-Tokens': '999080',
+            'X-Ratelimit-Limit-Requests': '21',
+            'X-Ratelimit-Remaining-Requests': '21',
+          },
+        );
+      });
+
+      final snapshot = await QuotaClient(
+        client: mock,
+      ).refresh(MonitorAccount.amdDefault(), 'secret');
+
+      expect(snapshot.remaining, 999080);
+      expect(snapshot.limit, 1000000);
+      expect(snapshot.used, 920);
+      expect(snapshot.unit, 'Tokens');
+      expect(snapshot.requestLimit, 21);
+      expect(snapshot.requestRemaining, 21);
+    },
+  );
+
   test('reads DeepSeek total balance', () async {
     final mock = MockClient(
       (request) async => http.Response(
