@@ -191,6 +191,62 @@ struct EDUIWidgetView: View {
     @Environment(\.widgetRenderingMode) private var renderingMode
     let entry: QuotaEntry
 
+    private var isWhiteAppearance: Bool {
+        entry.appearance == .white
+    }
+
+    /// Keep explicit colors in full-color mode; semantic colors let WidgetKit
+    /// choose a readable tint in accented and vibrant rendering modes.
+    private var primaryText: Color {
+        guard renderingMode == .fullColor else { return .primary }
+        return isWhiteAppearance
+            ? Color(red: 0.06, green: 0.08, blue: 0.16)
+            : .white
+    }
+
+    private var secondaryText: Color {
+        guard renderingMode == .fullColor else { return .primary.opacity(0.72) }
+        return isWhiteAppearance
+            ? Color(red: 0.20, green: 0.24, blue: 0.36)
+            : Color.white.opacity(0.86)
+    }
+
+    private var accentColor: Color {
+        guard renderingMode == .fullColor else { return .accentColor }
+        return isWhiteAppearance
+            ? Color(red: 0.16, green: 0.30, blue: 0.82)
+            : Color(red: 0.88, green: 0.93, blue: 1.0)
+    }
+
+    private var progressTrackColor: Color {
+        guard renderingMode == .fullColor else {
+            return .primary.opacity(0.25)
+        }
+        return isWhiteAppearance
+            ? Color.black.opacity(0.14)
+            : Color.white.opacity(0.30)
+    }
+
+    private var surfaceFill: Color {
+        if renderingMode != .fullColor {
+            return isWhiteAppearance
+                ? Color.white.opacity(0.16)
+                : Color.black.opacity(0.16)
+        }
+        return isWhiteAppearance
+            ? Color.white.opacity(0.84)
+            : Color.black.opacity(0.28)
+    }
+
+    private var surfaceBorder: Color {
+        if renderingMode != .fullColor {
+            return .primary.opacity(0.20)
+        }
+        return isWhiteAppearance
+            ? Color.white.opacity(0.96)
+            : Color.white.opacity(0.30)
+    }
+
     var body: some View {
         Group {
             if entry.items.isEmpty {
@@ -201,21 +257,35 @@ struct EDUIWidgetView: View {
                 listView(limit: family == .systemLarge ? 5 : 3)
             }
         }
-        .environment(\.colorScheme, entry.appearance == .white ? .light : .dark)
+        .padding(family == .systemMedium ? 8 : 12)
+        .background {
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(surfaceFill)
+                .overlay {
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .stroke(surfaceBorder, lineWidth: 1)
+                }
+        }
         .containerBackground(for: .widget) {
             if renderingMode == .fullColor {
                 if entry.appearance == .white {
-                    Color.white
+                    Color(red: 0.94, green: 0.96, blue: 1.0)
                 } else {
                     ZStack {
-                        Color.white.opacity(0.13)
+                        Color(red: 0.04, green: 0.06, blue: 0.14).opacity(0.82)
                         LinearGradient(
                             colors: [
-                                Color(red: 0.38, green: 0.52, blue: 1.0).opacity(0.24),
-                                Color(red: 0.72, green: 0.46, blue: 1.0).opacity(0.18)
+                                Color(red: 0.28, green: 0.42, blue: 0.96).opacity(0.42),
+                                Color(red: 0.58, green: 0.30, blue: 0.92).opacity(0.34),
+                                Color.clear
                             ],
                             startPoint: .topLeading,
                             endPoint: .bottomTrailing
+                        )
+                        LinearGradient(
+                            colors: [Color.white.opacity(0.08), Color.clear],
+                            startPoint: .top,
+                            endPoint: .bottom
                         )
                     }
                 }
@@ -234,8 +304,9 @@ struct EDUIWidgetView: View {
                 .font(.headline.bold())
             Text(entry.message ?? "打开 EDUI 刷新额度")
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(secondaryText)
         }
+        .foregroundStyle(primaryText)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
     }
 
@@ -248,7 +319,10 @@ struct EDUIWidgetView: View {
                 Circle()
                     .fill(item.remaining > 0 ? .green : .red)
                     .frame(width: 7, height: 7)
-                    .widgetAccentable()
+                    .overlay {
+                        Circle()
+                            .stroke(primaryText.opacity(0.62), lineWidth: 1)
+                    }
             }
             Spacer(minLength: 2)
             Text(item.accountName)
@@ -260,14 +334,16 @@ struct EDUIWidgetView: View {
                 .lineLimit(1)
             Text(item.unit)
                 .font(.caption2)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(secondaryText)
             if let ratio = item.ratio {
                 ProgressView(value: ratio)
                     .progressViewStyle(.linear)
-                    .tint(.white)
+                    .tint(accentColor)
+                    .background(progressTrackColor, in: Capsule())
                     .widgetAccentable()
             }
         }
+        .foregroundStyle(primaryText)
     }
 
     private func listView(limit: Int) -> some View {
@@ -279,14 +355,17 @@ struct EDUIWidgetView: View {
                 Spacer()
                 Text("EDUI")
                     .font(.caption.bold())
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(secondaryText)
             }
             ForEach(Array(entry.items.prefix(limit))) { item in
                 HStack(spacing: 10) {
                     Circle()
                         .fill(item.remaining > 0 ? .green : .red)
                         .frame(width: 7, height: 7)
-                        .widgetAccentable()
+                        .overlay {
+                            Circle()
+                                .stroke(primaryText.opacity(0.62), lineWidth: 1)
+                        }
                     VStack(alignment: .leading, spacing: 3) {
                         Text(item.accountName)
                             .font(.caption.weight(.semibold))
@@ -294,7 +373,8 @@ struct EDUIWidgetView: View {
                         if let ratio = item.ratio {
                             ProgressView(value: ratio)
                                 .progressViewStyle(.linear)
-                                .tint(.white)
+                                .tint(accentColor)
+                                .background(progressTrackColor, in: Capsule())
                                 .widgetAccentable()
                         }
                     }
@@ -304,12 +384,13 @@ struct EDUIWidgetView: View {
                             .font(.system(.body, design: .rounded, weight: .bold))
                         Text(item.unit)
                             .font(.caption2)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(secondaryText)
                     }
                 }
             }
             Spacer(minLength: 0)
         }
+        .foregroundStyle(primaryText)
     }
 }
 
