@@ -34,7 +34,7 @@ unless widget
 end
 
 runner.build_configurations.each do |config|
-  config.build_settings.delete('CODE_SIGN_ENTITLEMENTS')
+  config.build_settings['CODE_SIGN_ENTITLEMENTS'] = 'Runner/Runner.entitlements'
   config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '17.0'
 end
 
@@ -52,7 +52,7 @@ end
 widget.build_configurations.each do |config|
   settings = config.build_settings
   settings['APPLICATION_EXTENSION_API_ONLY'] = 'YES'
-  settings.delete('CODE_SIGN_ENTITLEMENTS')
+  settings['CODE_SIGN_ENTITLEMENTS'] = 'EDUIWidget/EDUIWidget.entitlements'
   settings['CODE_SIGN_STYLE'] = 'Automatic'
   # Widget targets do not inherit Flutter/Generated.xcconfig. Use literal
   # values so ProcessInfoPlistFile always writes both required version keys.
@@ -68,10 +68,6 @@ widget.build_configurations.each do |config|
   settings['SWIFT_VERSION'] = '5.0'
   settings['TARGETED_DEVICE_FAMILY'] = '1,2'
 end
-
-group.files
-  .select { |file| file.path&.end_with?('.entitlements') }
-  .each(&:remove_from_project)
 
 project.save
 puts 'EDUIWidget target is configured.'

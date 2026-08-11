@@ -11,7 +11,7 @@ void main() {
     expect(restored, hasLength(1));
     expect(restored.single.name, 'AMD Radeon API');
     expect(restored.single.providerType, ProviderType.amdRadeon);
-    expect(restored.single.model, 'Qwen3.6-35B-A3B');
+    expect(restored.single.model, isEmpty);
     expect(MonitorAccount.encodeList(original), isNot(contains('apiKey')));
   });
 }

@@ -42,7 +42,7 @@ class MonitorAccount {
     name: 'AMD Radeon API',
     providerType: ProviderType.amdRadeon,
     baseUrl: 'https://developer.amd.com.cn/radeon/api/v1',
-    model: 'Qwen3.6-35B-A3B',
+    model: '',
   );
 
   MonitorAccount copyWith({

@@ -9,7 +9,7 @@ EDUI 是一款面向 iPhone 的模型额度监控工具。它可以读取模型�
 - 自定义 JSON：支持自定义 GET 路径及点号字段路径。
 - iOS 小号、中号和大号 Widget。
 - iOS 26 clear/tinted Liquid Glass 与 accented rendering mode。
-- 主应用 API Key 使用 iOS Keychain 保存；Widget 使用自己的可编辑配置直接查询额度。
+- 主应用 API Key 使用 iOS Keychain 保存；Widget 通过 App Group 读取账户名称和已同步额度快照，不读取 API Key。
 
 ## AMD Radeon API
 
@@ -32,10 +32,10 @@ Windows 不能构建 iOS App。推送 `ios` 分支后，GitHub Actions 会使用
 
 ## Widget 配置
 
-添加 EDUI Widget 后，长按小组件并选择“编辑小组件”，填写 API Base URL、API Key 和探测模型。Widget 不使用 App Group，重新签名时不需要 App Group 描述文件。
+添加 EDUI Widget 后，长按小组件并选择“编辑小组件”，即可从 EDUI 主应用已经配置的账户中选择一个或全部账户。请先在主应用保存账户并成功刷新一次。
 
 ## 安全说明
 
 - 不要将真实 API Key 提交到 Git。
-- Widget 的 API Key 保存在系统的小组件配置中，不与主应用 Keychain 共享。
+- Widget 不接触 API Key，只读取 App Group 中的名称和额度快照。
 - OpenAI 兼容额度探针会产生一次极小的真实 API 请求，因此不适合高频刷新。

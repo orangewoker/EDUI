@@ -30,7 +30,7 @@ class AppController extends ChangeNotifier {
     snapshots = await _store.loadSnapshots();
     loading = false;
     notifyListeners();
-    await _widgetBridge.sync(snapshots);
+    await _widgetBridge.sync(accounts, snapshots);
   }
 
   QuotaSnapshot? snapshotFor(String accountId) {
@@ -66,7 +66,7 @@ class AppController extends ChangeNotifier {
       _store.saveSnapshots(snapshots),
       _store.deleteAccountSecrets(accountId),
     ]);
-    await _widgetBridge.sync(snapshots);
+    await _widgetBridge.sync(accounts, snapshots);
     notifyListeners();
   }
 
@@ -83,7 +83,7 @@ class AppController extends ChangeNotifier {
         ...snapshots.where((item) => item.accountId != account.id),
       ];
       await _store.saveSnapshots(snapshots);
-      await _widgetBridge.sync(snapshots);
+      await _widgetBridge.sync(accounts, snapshots);
     } catch (error) {
       errors[account.id] = '$error';
     } finally {

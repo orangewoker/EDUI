@@ -468,7 +468,16 @@ class _AccountEditorState extends State<AccountEditor> {
           const SizedBox(height: 14),
           _field(name, '显示名称'),
           _field(baseUrl, 'API Base URL', keyboard: TextInputType.url),
-          if (openAI) _field(model, '探测模型', helper: '每次刷新发送 1 token 的最小请求'),
+          if (openAI)
+            const Padding(
+              padding: EdgeInsets.only(bottom: 14),
+              child: ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(Icons.auto_awesome_rounded),
+                title: Text('自动选择可用模型'),
+                subtitle: Text('EDUI 会读取 /models，并自动尝试可用模型，无需手动填写。'),
+              ),
+            ),
           if (custom) ...[
             _field(endpoint, '接口路径', helper: '例如 /api/user/self'),
             _field(balanceField, '剩余额度字段', helper: '支持 data.quota 这类点号路径'),
@@ -551,7 +560,7 @@ class _AccountEditorState extends State<AccountEditor> {
       name: name.text.trim(),
       providerType: type,
       baseUrl: baseUrl.text.trim(),
-      model: model.text.trim(),
+      model: type == ProviderType.amdRadeon ? '' : model.text.trim(),
       endpointPath: endpoint.text.trim(),
       balanceField: balanceField.text.trim(),
       limitField: limitField.text.trim(),

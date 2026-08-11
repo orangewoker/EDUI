@@ -24,9 +24,29 @@ class QuotaClient {
     MonitorAccount account,
     String apiKey,
   ) async {
-    final model = account.model.trim().isNotEmpty
-        ? account.model.trim()
-        : await _firstModel(account.baseUrl, apiKey);
+    final models = await _availableModels(account.baseUrl, apiKey);
+    if (models.isEmpty) {
+      throw const QuotaException('服务的 /models 没有返回可用模型');
+    }
+    QuotaException? lastError;
+    for (final model in models.take(12)) {
+      try {
+        return await _probeOpenAICompatible(account, apiKey, model);
+      } on QuotaException catch (error) {
+        lastError = error;
+        if (!error.canTryNextModel) rethrow;
+      }
+    }
+    throw QuotaException(
+      '自动尝试了 ${models.take(12).length} 个模型，均不可用：${lastError?.message ?? '未知错误'}',
+    );
+  }
+
+  Future<QuotaSnapshot> _probeOpenAICompatible(
+    MonitorAccount account,
+    String apiKey,
+    String model,
+  ) async {
     final uri = _endpoint(account.baseUrl, 'chat/completions');
     final response = await _client
         .post(
@@ -42,7 +62,7 @@ class QuotaClient {
           }),
         )
         .timeout(const Duration(seconds: 60));
-    _requireSuccess(response);
+    _requireSuccess(response, allowModelFallback: true);
 
     final headers = response.headers;
     final limit = _doubleHeader(headers, 'x-ratelimit-limit-user-daily-usd');
@@ -77,17 +97,20 @@ class QuotaClient {
     );
   }
 
-  Future<String> _firstModel(String baseUrl, String apiKey) async {
+  Future<List<String>> _availableModels(String baseUrl, String apiKey) async {
     final response = await _client
         .get(_endpoint(baseUrl, 'models'), headers: _headers(apiKey))
         .timeout(const Duration(seconds: 30));
     _requireSuccess(response);
     final body = jsonDecode(response.body);
     final data = body is Map ? body['data'] : null;
-    if (data is! List || data.isEmpty || data.first is! Map) {
-      throw const QuotaException('无法从 /models 自动选择模型');
-    }
-    return '${(data.first as Map)['id']}';
+    if (data is! List) return [];
+    return data
+        .whereType<Map>()
+        .map((item) => '${item['id'] ?? ''}'.trim())
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList();
   }
 
   Future<QuotaSnapshot> _refreshDeepSeek(
@@ -159,7 +182,10 @@ class QuotaClient {
     '${base.replaceAll(RegExp(r'/+$'), '')}/${path.replaceAll(RegExp(r'^/+'), '')}',
   );
 
-  void _requireSuccess(http.Response response) {
+  void _requireSuccess(
+    http.Response response, {
+    bool allowModelFallback = false,
+  }) {
     if (response.statusCode >= 200 && response.statusCode < 300) return;
     var detail = response.body.trim();
     try {
@@ -170,7 +196,20 @@ class QuotaClient {
       }
     } catch (_) {}
     if (detail.length > 240) detail = '${detail.substring(0, 240)}…';
-    throw QuotaException('HTTP ${response.statusCode}：$detail');
+    final lower = detail.toLowerCase();
+    final canTryNextModel =
+        allowModelFallback &&
+        response.statusCode != 401 &&
+        response.statusCode != 403 &&
+        response.statusCode != 429 &&
+        (response.statusCode >= 500 ||
+            lower.contains('model') ||
+            lower.contains('not available') ||
+            lower.contains('not found'));
+    throw QuotaException(
+      'HTTP ${response.statusCode}：$detail',
+      canTryNextModel: canTryNextModel,
+    );
   }
 
   double? _doubleHeader(Map<String, String> headers, String name) =>
@@ -197,8 +236,9 @@ class QuotaClient {
 }
 
 class QuotaException implements Exception {
-  const QuotaException(this.message);
+  const QuotaException(this.message, {this.canTryNextModel = false});
   final String message;
+  final bool canTryNextModel;
   @override
   String toString() => message;
 }

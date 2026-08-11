@@ -9,9 +9,20 @@ import 'package:http/testing.dart';
 void main() {
   test('reads AMD daily USD and RPM quota response headers', () async {
     final mock = MockClient((request) async {
-      expect(request.url.path, endsWith('/chat/completions'));
       expect(request.headers['Authorization'], 'Bearer secret');
+      if (request.url.path.endsWith('/models')) {
+        return http.Response(
+          jsonEncode({
+            'data': [
+              {'id': 'auto-model'},
+            ],
+          }),
+          200,
+        );
+      }
+      expect(request.url.path, endsWith('/chat/completions'));
       final body = jsonDecode(request.body) as Map<String, dynamic>;
+      expect(body['model'], 'auto-model');
       expect(body['max_tokens'], 1);
       return http.Response(
         jsonEncode({
@@ -29,9 +40,10 @@ void main() {
       );
     });
 
-    final snapshot = await QuotaClient(
-      client: mock,
-    ).refresh(MonitorAccount.amdDefault(), 'secret');
+    final snapshot = await QuotaClient(client: mock).refresh(
+      MonitorAccount.amdDefault().copyWith(model: 'stale-model'),
+      'secret',
+    );
 
     expect(snapshot.remaining, 0.75);
     expect(snapshot.limit, 1);
