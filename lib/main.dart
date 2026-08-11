@@ -587,7 +587,7 @@ class _WidgetHelp extends StatelessWidget {
             SizedBox(width: 12),
             Expanded(
               child: Text(
-                '长按 iPhone 桌面 → 编辑 → 添加小组件 → 搜索 EDUI。支持小号、中号和大号，并适配 iOS 26 透明与着色外观。',
+                '长按 iPhone 桌面 → 编辑 → 添加小组件 → 搜索 EDUI。添加后长按 EDUI 小组件并选择“编辑小组件”，填写 API Key。',
               ),
             ),
           ],

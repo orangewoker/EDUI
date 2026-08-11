@@ -1,24 +1,37 @@
+import AppIntents
 import Foundation
 import SwiftUI
 import WidgetKit
 
-private let appGroupId = "group.com.orangewoker.edui"
 private let widgetKind = "EDUIWidget"
 
-struct QuotaItem: Codable, Identifiable {
-    let accountId: String
+struct QuotaWidgetConfiguration: WidgetConfigurationIntent {
+    static var title: LocalizedStringResource = "额度账户"
+    static var description = IntentDescription("配置小组件直接查询的模型服务商。")
+
+    @Parameter(title: "显示名称", default: "AMD Radeon API")
+    var accountName: String
+
+    @Parameter(title: "API Base URL", default: "https://developer.amd.com.cn/radeon/api/v1")
+    var baseURL: String
+
+    @Parameter(title: "API Key", default: "")
+    var apiKey: String
+
+    @Parameter(title: "探测模型", default: "Qwen3.6-35B-A3B")
+    var model: String
+}
+
+struct QuotaItem: Identifiable {
     let accountName: String
     let remaining: Double
     let limit: Double?
     let used: Double?
     let unit: String
-    let updatedAt: String
-    let resetAt: String?
     let requestLimit: Int?
     let requestRemaining: Int?
-    let message: String?
 
-    var id: String { accountId }
+    var id: String { accountName }
 
     var ratio: Double? {
         guard let limit, limit > 0 else { return nil }
@@ -35,45 +48,112 @@ struct QuotaItem: Codable, Identifiable {
 struct QuotaEntry: TimelineEntry {
     let date: Date
     let items: [QuotaItem]
+    let message: String?
 }
 
-struct QuotaTimelineProvider: TimelineProvider {
+struct QuotaTimelineProvider: AppIntentTimelineProvider {
     func placeholder(in context: Context) -> QuotaEntry {
-        QuotaEntry(date: .now, items: [
-            QuotaItem(
-                accountId: "preview",
-                accountName: "AMD Radeon API",
-                remaining: 1,
-                limit: 1,
-                used: 0,
-                unit: "USD/日",
-                updatedAt: ISO8601DateFormatter().string(from: .now),
-                resetAt: nil,
-                requestLimit: 30,
-                requestRemaining: 29,
-                message: nil
-            )
+        QuotaEntry(date: .now, items: [previewItem], message: nil)
+    }
+
+    func snapshot(
+        for configuration: QuotaWidgetConfiguration,
+        in context: Context
+    ) async -> QuotaEntry {
+        if context.isPreview {
+            return QuotaEntry(date: .now, items: [previewItem], message: nil)
+        }
+        return await fetch(configuration)
+    }
+
+    func timeline(
+        for configuration: QuotaWidgetConfiguration,
+        in context: Context
+    ) async -> Timeline<QuotaEntry> {
+        let entry = await fetch(configuration)
+        let next = Calendar.current.date(byAdding: .minute, value: 30, to: .now)
+            ?? .now.addingTimeInterval(1800)
+        return Timeline(entries: [entry], policy: .after(next))
+    }
+
+    private var previewItem: QuotaItem {
+        QuotaItem(
+            accountName: "AMD Radeon API",
+            remaining: 1,
+            limit: 1,
+            used: 0,
+            unit: "USD/日",
+            requestLimit: 30,
+            requestRemaining: 29
+        )
+    }
+
+    private func fetch(_ configuration: QuotaWidgetConfiguration) async -> QuotaEntry {
+        let apiKey = configuration.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !apiKey.isEmpty else {
+            return QuotaEntry(date: .now, items: [], message: "长按小组件，编辑并填写 API Key")
+        }
+
+        let base = configuration.baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard let url = URL(string: "\(base)/chat/completions") else {
+            return QuotaEntry(date: .now, items: [], message: "API URL 无效")
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 45
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try? JSONSerialization.data(withJSONObject: [
+            "model": configuration.model,
+            "messages": [["role": "user", "content": "Reply with a single dot."]],
+            "max_tokens": 1,
+            "stream": false,
         ])
+
+        do {
+            let (_, rawResponse) = try await URLSession.shared.data(for: request)
+            guard let response = rawResponse as? HTTPURLResponse else {
+                return QuotaEntry(date: .now, items: [], message: "服务响应无效")
+            }
+            guard (200..<300).contains(response.statusCode) else {
+                return QuotaEntry(
+                    date: .now,
+                    items: [],
+                    message: "API 请求失败：HTTP \(response.statusCode)"
+                )
+            }
+
+            let limit = doubleHeader("x-ratelimit-limit-user-daily-usd", in: response)
+            let remaining = doubleHeader("x-ratelimit-remaining-user-daily-usd", in: response)
+            let used = doubleHeader("x-ratelimit-used-user-daily-usd", in: response)
+            guard remaining != nil || limit != nil else {
+                return QuotaEntry(date: .now, items: [], message: "响应中没有额度信息")
+            }
+            let resolvedRemaining = remaining ?? max((limit ?? 0) - (used ?? 0), 0)
+            let item = QuotaItem(
+                accountName: configuration.accountName,
+                remaining: resolvedRemaining,
+                limit: limit,
+                used: used,
+                unit: "USD/日",
+                requestLimit: intHeader("x-ratelimit-limit-user-rpm", in: response),
+                requestRemaining: intHeader("x-ratelimit-remaining-user-rpm", in: response)
+            )
+            return QuotaEntry(date: .now, items: [item], message: nil)
+        } catch {
+            return QuotaEntry(date: .now, items: [], message: "刷新失败，请稍后重试")
+        }
     }
 
-    func getSnapshot(in context: Context, completion: @escaping (QuotaEntry) -> Void) {
-        completion(QuotaEntry(date: .now, items: loadItems()))
+    private func doubleHeader(_ name: String, in response: HTTPURLResponse) -> Double? {
+        guard let value = response.value(forHTTPHeaderField: name) else { return nil }
+        return Double(value)
     }
 
-    func getTimeline(in context: Context, completion: @escaping (Timeline<QuotaEntry>) -> Void) {
-        let entry = QuotaEntry(date: .now, items: loadItems())
-        let next = Calendar.current.date(byAdding: .minute, value: 30, to: .now) ?? .now.addingTimeInterval(1800)
-        completion(Timeline(entries: [entry], policy: .after(next)))
-    }
-
-    private func loadItems() -> [QuotaItem] {
-        guard
-            let defaults = UserDefaults(suiteName: appGroupId),
-            let raw = defaults.string(forKey: "quota_payload"),
-            let data = raw.data(using: .utf8),
-            let decoded = try? JSONDecoder().decode([QuotaItem].self, from: data)
-        else { return [] }
-        return decoded
+    private func intHeader(_ name: String, in response: HTTPURLResponse) -> Int? {
+        guard let value = response.value(forHTTPHeaderField: name) else { return nil }
+        return Int(Double(value) ?? 0)
     }
 }
 
@@ -84,23 +164,23 @@ struct EDUIWidgetView: View {
 
     var body: some View {
         Group {
-            if entry.items.isEmpty {
-                emptyView
-            } else {
-                switch family {
-                case .systemSmall:
-                    smallView(entry.items[0])
-                case .systemLarge:
-                    listView(limit: 5)
-                default:
-                    listView(limit: 3)
+            if let item = entry.items.first {
+                if family == .systemSmall {
+                    smallView(item)
+                } else {
+                    listView(item)
                 }
+            } else {
+                emptyView
             }
         }
         .containerBackground(for: .widget) {
             if renderingMode == .fullColor {
                 LinearGradient(
-                    colors: [Color(red: 0.15, green: 0.18, blue: 0.38), Color(red: 0.38, green: 0.25, blue: 0.68)],
+                    colors: [
+                        Color(red: 0.15, green: 0.18, blue: 0.38),
+                        Color(red: 0.38, green: 0.25, blue: 0.68),
+                    ],
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
                 )
@@ -117,7 +197,7 @@ struct EDUIWidgetView: View {
                 .widgetAccentable()
             Text("EDUI")
                 .font(.headline.bold())
-            Text("打开应用并刷新额度")
+            Text(entry.message ?? "编辑小组件以配置账户")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -155,8 +235,8 @@ struct EDUIWidgetView: View {
         }
     }
 
-    private func listView(limit: Int) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+    private func listView(_ item: QuotaItem) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Label("额度监控", systemImage: "waveform.path.ecg")
                     .font(.headline.bold())
@@ -166,34 +246,30 @@ struct EDUIWidgetView: View {
                     .font(.caption.bold())
                     .foregroundStyle(.secondary)
             }
-            ForEach(Array(entry.items.prefix(limit))) { item in
-                HStack(spacing: 10) {
-                    Circle()
-                        .fill(item.remaining > 0 ? .green : .red)
-                        .frame(width: 7, height: 7)
-                        .widgetAccentable()
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(item.accountName)
-                            .font(.caption.weight(.semibold))
-                            .lineLimit(1)
-                        if let ratio = item.ratio {
-                            ProgressView(value: ratio)
-                                .progressViewStyle(.linear)
-                                .tint(.white)
-                                .widgetAccentable()
-                        }
-                    }
-                    Spacer(minLength: 4)
-                    VStack(alignment: .trailing, spacing: 1) {
-                        Text(item.formattedRemaining)
-                            .font(.system(.body, design: .rounded, weight: .bold))
-                        Text(item.unit)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
+            Spacer(minLength: 0)
+            Text(item.accountName)
+                .font(.subheadline.weight(.semibold))
+            HStack(alignment: .firstTextBaseline) {
+                Text(item.formattedRemaining)
+                    .font(.system(size: family == .systemLarge ? 44 : 34, weight: .black, design: .rounded))
+                Text(item.unit)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if let remaining = item.requestRemaining, let limit = item.requestLimit {
+                    Text("\(remaining)/\(limit) RPM")
+                        .font(.caption)
                 }
             }
+            if let ratio = item.ratio {
+                ProgressView(value: ratio)
+                    .progressViewStyle(.linear)
+                    .tint(.white)
+                    .widgetAccentable()
+            }
             Spacer(minLength: 0)
+            Text("更新于 \(entry.date, style: .time)")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
         }
     }
 }
@@ -207,11 +283,15 @@ struct EDUIWidgetBundle: WidgetBundle {
 
 struct EDUIQuotaWidget: Widget {
     var body: some WidgetConfiguration {
-        StaticConfiguration(kind: widgetKind, provider: QuotaTimelineProvider()) { entry in
+        AppIntentConfiguration(
+            kind: widgetKind,
+            intent: QuotaWidgetConfiguration.self,
+            provider: QuotaTimelineProvider()
+        ) { entry in
             EDUIWidgetView(entry: entry)
         }
         .configurationDisplayName("EDUI 额度")
-        .description("在桌面查看模型服务商的余额、每日额度和请求限制。")
+        .description("在桌面查看模型服务商的每日额度和请求限制。")
         .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
         .containerBackgroundRemovable(true)
     }
