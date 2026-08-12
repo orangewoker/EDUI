@@ -3,7 +3,6 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:home_widget/home_widget.dart';
-import 'package:workmanager/workmanager.dart';
 
 import 'app_controller.dart';
 import 'models/monitor_account.dart';
@@ -12,40 +11,8 @@ import 'services/codex_oauth_credential.dart';
 import 'services/login_launcher.dart';
 import 'services/widget_bridge.dart';
 
-const _backgroundRefreshTask = 'com.orangewoker.edui.quota-refresh';
-
-@pragma('vm:entry-point')
-void _backgroundCallbackDispatcher() {
-  Workmanager().executeTask((task, inputData) async {
-    WidgetsFlutterBinding.ensureInitialized();
-    final controller = AppController();
-    await controller.initialize();
-    await controller.refreshStale(maxAge: const Duration(minutes: 30));
-    return true;
-  });
-}
-
-void _scheduleBackgroundRefresh() {
-  unawaited(() async {
-    try {
-      await Workmanager().registerPeriodicTask(
-        _backgroundRefreshTask,
-        'quota-refresh',
-        frequency: const Duration(minutes: 30),
-        constraints: Constraints(networkType: NetworkType.connected),
-      );
-    } catch (_) {
-      // iOS may reject a duplicate registration; the existing task remains
-      // scheduled and foreground refresh still works.
-    }
-  }());
-}
-
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  HomeWidget.setAppGroupId(WidgetBridge.appGroupId);
-  Workmanager().initialize(_backgroundCallbackDispatcher);
-  _scheduleBackgroundRefresh();
   runApp(const EDUIApp());
 }
 
@@ -64,17 +31,52 @@ class _EDUIAppState extends State<EDUIApp> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _widgetClicks = HomeWidget.widgetClicked.listen(_handleWidgetUri);
-    controller.initialize().then((_) async {
-      _handleWidgetUri(await HomeWidget.initiallyLaunchedFromHomeWidget());
-      await controller.refreshStale();
-    });
+    unawaited(_startApp());
+  }
+
+  /// Completes platform/plugin setup after Flutter has attached the engine.
+  ///
+  /// Keep optional platform calls best-effort so a missing App Group or an
+  /// older signing environment cannot prevent the dashboard from opening.
+  Future<void> _startApp() async {
+    try {
+      await HomeWidget.setAppGroupId(WidgetBridge.appGroupId);
+    } catch (_) {
+      // Widget sharing is optional; WidgetBridge.sync has the same fallback.
+    }
+
+    try {
+      _widgetClicks = HomeWidget.widgetClicked.listen(
+        _handleWidgetUri,
+        onError: (_, _) {},
+      );
+    } catch (_) {
+      // Continue without widget deep-link events if the host does not expose
+      // the optional HomeWidget event channel.
+    }
+
+    try {
+      await controller.initialize();
+      if (!mounted) return;
+
+      Uri? initialUri;
+      try {
+        initialUri = await HomeWidget.initiallyLaunchedFromHomeWidget();
+      } catch (_) {
+        // A widget launch URL is optional and may be unavailable on older iOS.
+      }
+      await _handleWidgetUri(initialUri);
+      if (mounted) await controller.refreshStale();
+    } catch (_) {
+      // Account storage/plugin failures should be shown by the normal UI
+      // state, never surfaced as an uncaught launch exception.
+    }
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
-      controller.refreshStale();
+      unawaited(controller.refreshStale().catchError((_) {}));
     }
   }
 
@@ -91,7 +93,7 @@ class _EDUIAppState extends State<EDUIApp> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _widgetClicks?.cancel();
+    unawaited(_widgetClicks?.cancel());
     controller.dispose();
     super.dispose();
   }
