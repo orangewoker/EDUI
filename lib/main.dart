@@ -385,7 +385,7 @@ class _AccountCard extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 18),
-              if (error != null)
+              if (error != null && snapshot == null)
                 Text(
                   error!,
                   style: TextStyle(color: Theme.of(context).colorScheme.error),
@@ -432,6 +432,29 @@ class _AccountCard extends StatelessWidget {
                   '更新于 ${_formatTime(snapshot!.updatedAt)}${snapshot!.resetAt == null ? '' : ' · ${_formatTime(snapshot!.resetAt!)} 重置'}',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
+                if (error != null) ...[
+                  const SizedBox(height: 10),
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(
+                        Icons.cloud_off_rounded,
+                        size: 17,
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                      const SizedBox(width: 7),
+                      Expanded(
+                        child: Text(
+                          '本次刷新失败，正在显示上次数据。$error',
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(
+                                color: Theme.of(context).colorScheme.error,
+                              ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
               ],
             ],
           ),

@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:http/http.dart' as http;
 
@@ -7,9 +9,16 @@ import '../models/quota_snapshot.dart';
 import 'codex_oauth_credential.dart';
 
 class QuotaClient {
-  QuotaClient({http.Client? client}) : _client = client ?? http.Client();
+  QuotaClient({
+    http.Client? client,
+    this._retryDelays = const [
+      Duration(milliseconds: 600),
+      Duration(milliseconds: 1400),
+    ],
+  }) : _client = client ?? http.Client();
 
   final http.Client _client;
+  final List<Duration> _retryDelays;
 
   Future<QuotaSnapshot> refresh(
     MonitorAccount account,
@@ -23,13 +32,42 @@ class QuotaClient {
             : '请先填写 API Key',
       );
     }
-    return switch (account.providerType) {
-      ProviderType.openAI => _refreshOpenAI(account, key),
-      ProviderType.sub2Api => _refreshSub2Api(account, key),
-      ProviderType.amdRadeon => _refreshOpenAICompatible(account, key),
-      ProviderType.deepSeek => _refreshDeepSeek(account, key),
-      ProviderType.customJson => _refreshCustom(account, key),
-    };
+    for (var attempt = 0; ; attempt++) {
+      try {
+        return await switch (account.providerType) {
+          ProviderType.openAI => _refreshOpenAI(account, key),
+          ProviderType.sub2Api => _refreshSub2Api(account, key),
+          ProviderType.amdRadeon => _refreshOpenAICompatible(account, key),
+          ProviderType.deepSeek => _refreshDeepSeek(account, key),
+          ProviderType.customJson => _refreshCustom(account, key),
+        };
+      } catch (error) {
+        if (!_isTransientNetworkError(error)) rethrow;
+        if (attempt >= _retryDelays.length) {
+          final host = Uri.tryParse(account.baseUrl)?.host ?? '';
+          final target = host.isEmpty ? '服务站点' : host;
+          throw QuotaException(
+            '暂时无法连接 $target，已自动重试 ${_retryDelays.length} 次。请稍后再试，或检查网络与代理。',
+          );
+        }
+        await Future<void>.delayed(_retryDelays[attempt]);
+      }
+    }
+  }
+
+  bool _isTransientNetworkError(Object error) {
+    if (error is SocketException || error is TimeoutException) return true;
+    if (error is http.ClientException) {
+      final message = error.message.toLowerCase();
+      return message.contains('socketexception') ||
+          message.contains('connection refused') ||
+          message.contains('connection reset') ||
+          message.contains('connection closed') ||
+          message.contains('failed host lookup') ||
+          message.contains('network is unreachable') ||
+          message.contains('software caused connection abort');
+    }
+    return false;
   }
 
   Future<QuotaSnapshot> _refreshOpenAI(

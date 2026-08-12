@@ -8,6 +8,75 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 void main() {
+  test('retries transient connection failures before succeeding', () async {
+    var attempts = 0;
+    final mock = MockClient((request) async {
+      attempts++;
+      if (attempts < 3) {
+        throw http.ClientException(
+          'SocketException: Connection refused',
+          request.url,
+        );
+      }
+      return http.Response(
+        jsonEncode({
+          'rate_limit': {
+            'primary_window': {'used_percent': 25},
+          },
+        }),
+        200,
+      );
+    });
+
+    final snapshot =
+        await QuotaClient(
+          client: mock,
+          retryDelays: const [Duration.zero, Duration.zero],
+        ).refresh(
+          MonitorAccount.codexDefault(id: 'retry-codex'),
+          'session=retry-cookie',
+        );
+
+    expect(attempts, 3);
+    expect(snapshot.remaining, 75);
+  });
+
+  test('turns exhausted connection retries into a readable message', () async {
+    var attempts = 0;
+    final mock = MockClient((request) async {
+      attempts++;
+      throw http.ClientException(
+        'SocketException: Connection refused',
+        request.url,
+      );
+    });
+
+    await expectLater(
+      QuotaClient(
+        client: mock,
+        retryDelays: const [Duration.zero, Duration.zero],
+      ).refresh(
+        MonitorAccount.codexDefault(id: 'offline-codex'),
+        'session=offline-cookie',
+      ),
+      throwsA(
+        isA<QuotaException>()
+            .having((error) => error.message, 'message', contains('暂时无法连接'))
+            .having(
+              (error) => error.message,
+              'message',
+              contains('chatgpt.com'),
+            )
+            .having(
+              (error) => error.message,
+              'message',
+              isNot(contains('SocketException')),
+            ),
+      ),
+    );
+    expect(attempts, 3);
+  });
+
   test('reads OpenAI organization costs with an admin key', () async {
     final mock = MockClient((request) async {
       expect(request.url.path, '/v1/organization/costs');
