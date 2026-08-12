@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'app_controller.dart';
 import 'models/monitor_account.dart';
 import 'models/quota_snapshot.dart';
+import 'services/codex_oauth_credential.dart';
 import 'services/login_launcher.dart';
 
 void main() {
@@ -689,9 +690,9 @@ class _AccountEditorState extends State<AccountEditor> {
               child: ListTile(
                 contentPadding: EdgeInsets.zero,
                 leading: Icon(Icons.info_outline_rounded),
-                title: Text('网页登录不会把 Cookie 自动交给 EDUI'),
+                title: Text('支持 Cookie 或 Codex 导出 JSON'),
                 subtitle: Text(
-                  '请从你自己的已登录浏览器复制完整 Cookie；Cookie 只保存到 iOS Keychain。Codex 模板使用实验性额度接口，失效时可直接修改接口和字段。',
+                  '可粘贴完整 Cookie，也可直接粘贴 sub2api-data 导出的 JSON。EDUI 会自动提取 access_token 和 ChatGPT 账户 ID；凭证只保存到 iOS Keychain。',
                 ),
               ),
             ),
@@ -701,11 +702,11 @@ class _AccountEditorState extends State<AccountEditor> {
             autocorrect: false,
             enableSuggestions: false,
             decoration: InputDecoration(
-              labelText: cookie ? 'Cookie' : 'API Key',
+              labelText: cookie ? 'Cookie / Codex 导出 JSON' : 'API Key',
               helperText: hasStoredKey
                   ? '已安全保存；留空表示不修改'
                   : cookie
-                  ? '粘贴完整 Cookie Header，保存在 iOS Keychain'
+                  ? '粘贴 Cookie Header 或完整 sub2api-data JSON，保存在 iOS Keychain'
                   : sub2Api
                   ? 'Sub2API 用户 API Key；保存在 iOS Keychain'
                   : type == ProviderType.openAI
@@ -821,6 +822,19 @@ class _AccountEditorState extends State<AccountEditor> {
         context,
       ).showSnackBar(const SnackBar(content: Text('名称和 URL 不能为空')));
       return;
+    }
+    final rawCredential = credential.text.trim();
+    if (authenticationType == AuthenticationType.manualCookie &&
+        rawCredential.startsWith('{')) {
+      try {
+        CodexOAuthCredential.parse(rawCredential);
+      } on CodexOAuthCredentialException catch (error) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error.message)));
+        return;
+      }
     }
     setState(() => saving = true);
     final id =

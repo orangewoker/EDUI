@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 
 import '../models/monitor_account.dart';
 import '../models/quota_snapshot.dart';
+import 'codex_oauth_credential.dart';
 
 class QuotaClient {
   QuotaClient({http.Client? client}) : _client = client ?? http.Client();
@@ -18,7 +19,7 @@ class QuotaClient {
     if (key.isEmpty) {
       throw QuotaException(
         account.authenticationType == AuthenticationType.manualCookie
-            ? '请先填写 Cookie'
+            ? '请先填写 Cookie 或 Codex 导出 JSON'
             : '请先填写 API Key',
       );
     }
@@ -367,6 +368,8 @@ class QuotaClient {
         .timeout(const Duration(seconds: 30));
     _requireSuccess(response);
     final body = jsonDecode(response.body);
+    final codexSnapshot = _parseCodexRateLimits(account, body);
+    if (codexSnapshot != null) return codexSnapshot;
     final rawValue = _numberAt(body, account.balanceField);
     var limit = account.limitField.trim().isEmpty
         ? null
@@ -405,17 +408,81 @@ class QuotaClient {
       resetAt: account.resetField.trim().isEmpty
           ? null
           : _dateAt(body, account.resetField),
+      quotaWindows: account.metricValueMode == MetricValueMode.usedPercent
+          ? [
+              QuotaWindow(
+                label: '额度',
+                remainingPercent: remaining,
+                resetAt: account.resetField.trim().isEmpty
+                    ? null
+                    : _dateAt(body, account.resetField),
+              ),
+            ]
+          : const [],
+    );
+  }
+
+  QuotaSnapshot? _parseCodexRateLimits(MonitorAccount account, dynamic body) {
+    if (body is! Map || body['rate_limit'] is! Map) return null;
+    final rateLimit = Map<String, dynamic>.from(body['rate_limit'] as Map);
+    final primaryWindow = _codexWindow(rateLimit['primary_window'], '5 小时额度');
+    final secondaryWindow = _codexWindow(rateLimit['secondary_window'], '本周额度');
+    final windows = <QuotaWindow>[?primaryWindow, ?secondaryWindow];
+    if (windows.isEmpty) return null;
+
+    final primary = windows.first;
+    final used = (100 - primary.remainingPercent).clamp(0.0, 100.0);
+    return QuotaSnapshot(
+      accountId: account.id,
+      accountName: account.name,
+      remaining: primary.remainingPercent,
+      limit: 100,
+      used: used,
+      unit: '%',
+      updatedAt: DateTime.now(),
+      resetAt: primary.resetAt,
+      message: windows.length > 1 ? 'Codex 5 小时与本周额度' : '${primary.label}剩余',
+      quotaWindows: windows,
+    );
+  }
+
+  QuotaWindow? _codexWindow(dynamic source, String label) {
+    if (source is! Map) return null;
+    final window = Map<String, dynamic>.from(source);
+    final usedPercent = _numberFrom(window['used_percent']);
+    if (usedPercent == null) return null;
+    final resetAfterSeconds = _numberFrom(window['reset_after_seconds']);
+    final resetAt =
+        _dateFrom(window['reset_at']) ??
+        (resetAfterSeconds == null
+            ? null
+            : DateTime.now().add(Duration(seconds: resetAfterSeconds.round())));
+    return QuotaWindow(
+      label: label,
+      remainingPercent: (100 - usedPercent).clamp(0.0, 100.0),
+      resetAt: resetAt,
     );
   }
 
   Map<String, String> _headers(MonitorAccount account, String credential) =>
       account.authenticationType == AuthenticationType.manualCookie
-      ? {
-          'Cookie': credential,
-          'Accept': 'application/json',
-          'Content-Type': 'application/json',
-        }
+      ? _manualCookieOrCodexOAuthHeaders(credential)
       : _apiKeyHeaders(credential);
+
+  Map<String, String> _manualCookieOrCodexOAuthHeaders(String credential) {
+    final exported = CodexOAuthCredential.tryParse(credential);
+    if (exported == null) {
+      return {
+        'Cookie': credential,
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+      };
+    }
+    if (exported.accountId.isEmpty) {
+      throw const QuotaException('Codex 导出 JSON 缺少 chatgpt_account_id，请重新导出');
+    }
+    return exported.requestHeaders;
+  }
 
   Map<String, String> _apiKeyHeaders(String apiKey) => {
     'Authorization': 'Bearer $apiKey',

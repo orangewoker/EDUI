@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:edui/models/monitor_account.dart';
+import 'package:edui/services/codex_oauth_credential.dart';
 import 'package:edui/services/quota_client.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -376,6 +377,171 @@ void main() {
       expect(snapshot.limit, 100);
       expect(snapshot.used, 28);
       expect(snapshot.resetAt, resetAt.toLocal());
+      expect(snapshot.quotaWindows, hasLength(1));
+      expect(snapshot.quotaWindows.single.label, '5 小时额度');
+      expect(snapshot.quotaWindows.single.remainingPercent, 72);
     },
   );
+
+  test(
+    'extracts access token and account id from Sub2API Codex export JSON',
+    () async {
+      final mock = MockClient((request) async {
+        expect(request.url.path, '/backend-api/wham/usage');
+        expect(request.headers['Authorization'], 'Bearer oauth-access-token');
+        expect(request.headers['ChatGPT-Account-Id'], 'chat-account-123');
+        expect(request.headers['User-Agent'], 'codex-cli');
+        expect(request.headers['Cookie'], isNull);
+        return http.Response(
+          jsonEncode({
+            'rate_limit': {
+              'primary_window': {'used_percent': 12, 'reset_at': 1787314247},
+              'secondary_window': {'used_percent': 42, 'reset_at': 1787659200},
+            },
+          }),
+          200,
+        );
+      });
+
+      final export = jsonEncode({
+        'type': 'sub2api-data',
+        'accounts': [
+          {
+            'name': 'space',
+            'platform': 'openai',
+            'type': 'oauth',
+            'credentials': {
+              'access_token': 'oauth-access-token',
+              'chatgpt_account_id': 'chat-account-123',
+            },
+          },
+        ],
+      });
+      final snapshot = await QuotaClient(
+        client: mock,
+      ).refresh(MonitorAccount.codexDefault(id: 'codex'), export);
+
+      expect(snapshot.remaining, 88);
+      expect(snapshot.limit, 100);
+      expect(snapshot.quotaWindows, hasLength(2));
+      expect(snapshot.quotaWindows[0].label, '5 小时额度');
+      expect(snapshot.quotaWindows[0].remainingPercent, 88);
+      expect(snapshot.quotaWindows[1].label, '本周额度');
+      expect(snapshot.quotaWindows[1].remainingPercent, 58);
+    },
+  );
+
+  test('supports a Codex subscription with only a weekly quota', () async {
+    final resetAt = DateTime.utc(2026, 8, 17, 0);
+    final mock = MockClient(
+      (_) async => http.Response(
+        jsonEncode({
+          'rate_limit': {
+            'secondary_window': {
+              'used_percent': 14,
+              'reset_at': resetAt.millisecondsSinceEpoch ~/ 1000,
+            },
+          },
+        }),
+        200,
+      ),
+    );
+
+    final snapshot = await QuotaClient(client: mock).refresh(
+      MonitorAccount.codexDefault(id: 'weekly-only'),
+      'session=weekly-cookie',
+    );
+
+    expect(snapshot.remaining, 86);
+    expect(snapshot.quotaWindows, hasLength(1));
+    expect(snapshot.quotaWindows.single.label, '本周额度');
+    expect(snapshot.quotaWindows.single.resetAt, resetAt.toLocal());
+  });
+
+  test('keeps raw Cookie credentials compatible with Codex usage', () async {
+    final mock = MockClient((request) async {
+      expect(request.headers['Cookie'], 'session=legacy-cookie');
+      expect(request.headers['Authorization'], isNull);
+      return http.Response(
+        jsonEncode({
+          'rate_limit': {
+            'primary_window': {'used_percent': 4},
+          },
+        }),
+        200,
+      );
+    });
+    final snapshot = await QuotaClient(client: mock).refresh(
+      MonitorAccount.codexDefault(id: 'codex'),
+      'session=legacy-cookie',
+    );
+    expect(snapshot.remaining, 96);
+  });
+
+  test('does not send malformed JSON as a Cookie header', () async {
+    final client = QuotaClient(
+      client: MockClient((_) async {
+        fail('request should not be sent for malformed OAuth JSON');
+      }),
+    );
+
+    expect(
+      () => client.refresh(
+        MonitorAccount.codexDefault(id: 'codex'),
+        '{not valid json',
+      ),
+      throwsA(isA<CodexOAuthCredentialException>()),
+    );
+  });
+
+  test('rejects a Codex OAuth export without ChatGPT account id', () async {
+    final client = QuotaClient(
+      client: MockClient((_) async {
+        fail('request should not be sent without ChatGPT account id');
+      }),
+    );
+
+    expect(
+      () => client.refresh(
+        MonitorAccount.codexDefault(id: 'codex'),
+        jsonEncode({
+          'type': 'sub2api-data',
+          'accounts': [
+            {
+              'platform': 'openai',
+              'type': 'oauth',
+              'credentials': {'access_token': 'token-without-account'},
+            },
+          ],
+        }),
+      ),
+      throwsA(isA<CodexOAuthCredentialException>()),
+    );
+  });
+
+  test('rejects expired or malformed Codex OAuth export JSON', () {
+    expect(
+      () => CodexOAuthCredential.parse(
+        jsonEncode({
+          'type': 'sub2api-data',
+          'accounts': [
+            {
+              'platform': 'openai',
+              'type': 'oauth',
+              'credentials': {
+                'access_token': 'expired-token',
+                'chatgpt_account_id': 'chat-account-123',
+                'expires_at': '2020-01-01T00:00:00Z',
+              },
+            },
+          ],
+        }),
+      ),
+      throwsA(isA<CodexOAuthCredentialException>()),
+    );
+    expect(
+      () => CodexOAuthCredential.parse('{not valid json'),
+      throwsA(isA<CodexOAuthCredentialException>()),
+    );
+  });
 }

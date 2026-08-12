@@ -18,7 +18,7 @@ EDUI 是一款面向 iPhone 的模型额度监控工具。它可以读取模型�
 
 ## Codex / ChatGPT 订阅
 
-OpenAI 当前没有公开供第三方 App 读取 ChatGPT/Codex 订阅剩余额度的 OAuth 或额度 API。EDUI 提供 Codex 官方登录跳转和手动 Cookie 模板，并预填实验性的 5 小时额度接口、已用百分比换算和重置时间字段；如果站点调整内部接口，可以直接在账户编辑页修改路径和字段。Cookie 只保存在 iOS Keychain，不会写入 Widget 或账户配置。
+Codex 账户支持两种凭证：完整 Cookie Header，或 Sub2API 导出的 `sub2api-data` JSON。粘贴导出 JSON 后，EDUI 会在发起额度请求时提取 `accounts[].credentials.access_token` 和 `chatgpt_account_id`，调用 ChatGPT 的 `/backend-api/wham/usage` 读取 5 小时与本周额度；只有一个额度窗口时也能显示。Cookie 仍然兼容。两种凭证都只保存在 iOS Keychain，不会写入 Widget 或普通账户配置。OAuth access token 过期后需要重新导出或重新登录。
 
 OpenAI API 组织账户不需要 Cookie。请使用组织 Admin API Key 调用官方 Costs API；普通项目 API Key通常没有读取组织成本的权限。
 

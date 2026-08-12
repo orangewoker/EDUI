@@ -8,6 +8,7 @@ on:
       - 'ios/**'
       - 'assets/**'
       - 'test/**'
+      - 'tool/**'
       - 'pubspec.yaml'
       - 'pubspec.lock'
       - '.github/workflows/ios-build.yml'

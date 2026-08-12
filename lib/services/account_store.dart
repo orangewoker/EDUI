@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../models/monitor_account.dart';
 import '../models/quota_snapshot.dart';
+import 'codex_oauth_credential.dart';
 
 class AccountStore {
   AccountStore({
@@ -86,10 +87,14 @@ class AccountStore {
     await _secureStorage.write(key: 'cookie.$accountId', value: value.trim());
   }
 
-  Future<void> writeCredential(MonitorAccount account, String value) =>
-      account.authenticationType == AuthenticationType.manualCookie
-      ? writeCookie(account.id, value)
-      : writeApiKey(account.id, value);
+  Future<void> writeCredential(MonitorAccount account, String value) {
+    if (account.authenticationType != AuthenticationType.manualCookie) {
+      return writeApiKey(account.id, value);
+    }
+    if (value.trim().isEmpty) return Future.value();
+    final exported = CodexOAuthCredential.tryParse(value);
+    return writeCookie(account.id, exported?.encodeForStorage() ?? value);
+  }
 
   Future<bool> hasApiKey(String accountId) async =>
       (await readApiKey(accountId)).isNotEmpty;

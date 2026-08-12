@@ -1,3 +1,29 @@
+class QuotaWindow {
+  const QuotaWindow({
+    required this.label,
+    required this.remainingPercent,
+    this.resetAt,
+  });
+
+  final String label;
+  final double remainingPercent;
+  final DateTime? resetAt;
+
+  Map<String, dynamic> toJson() => {
+    'label': label,
+    'remainingPercent': remainingPercent,
+    'resetAt': resetAt?.toIso8601String(),
+  };
+
+  factory QuotaWindow.fromJson(Map<String, dynamic> json) => QuotaWindow(
+    label: '${json['label'] ?? '额度'}',
+    remainingPercent: (json['remainingPercent'] as num).toDouble(),
+    resetAt: json['resetAt'] == null
+        ? null
+        : DateTime.tryParse('${json['resetAt']}'),
+  );
+}
+
 class QuotaSnapshot {
   const QuotaSnapshot({
     required this.accountId,
@@ -11,6 +37,7 @@ class QuotaSnapshot {
     this.requestLimit,
     this.requestRemaining,
     this.message,
+    this.quotaWindows = const [],
   });
 
   final String accountId;
@@ -24,6 +51,7 @@ class QuotaSnapshot {
   final int? requestLimit;
   final int? requestRemaining;
   final String? message;
+  final List<QuotaWindow> quotaWindows;
 
   double? get remainingRatio {
     if (limit == null || limit! <= 0) return null;
@@ -42,6 +70,7 @@ class QuotaSnapshot {
     'requestLimit': requestLimit,
     'requestRemaining': requestRemaining,
     'message': message,
+    'quotaWindows': quotaWindows.map((item) => item.toJson()).toList(),
   };
 
   factory QuotaSnapshot.fromJson(Map<String, dynamic> json) => QuotaSnapshot(
@@ -58,5 +87,13 @@ class QuotaSnapshot {
     requestLimit: (json['requestLimit'] as num?)?.round(),
     requestRemaining: (json['requestRemaining'] as num?)?.round(),
     message: json['message'] as String?,
+    quotaWindows: json['quotaWindows'] is List
+        ? (json['quotaWindows'] as List)
+              .whereType<Map>()
+              .map(
+                (item) => QuotaWindow.fromJson(Map<String, dynamic>.from(item)),
+              )
+              .toList()
+        : const [],
   );
 }
