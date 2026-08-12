@@ -450,12 +450,24 @@ struct EDUIWidgetView: View {
                 if visibleItems.count == 1 {
                     accountCard(visibleItems[0], compact: false)
                 } else {
-                    VStack(alignment: .leading, spacing: 9) {
-                        ForEach(visibleItems) { item in
-                            smallCompactRow(item)
+                    GeometryReader { proxy in
+                        let rowHeight = proxy.size.height / CGFloat(visibleItems.count)
+                        VStack(alignment: .leading, spacing: 0) {
+                            ForEach(visibleItems) { item in
+                                smallCompactRow(item)
+                                    .frame(
+                                        width: proxy.size.width,
+                                        height: rowHeight,
+                                        alignment: .leading
+                                    )
+                            }
                         }
+                        .frame(
+                            width: proxy.size.width,
+                            height: proxy.size.height,
+                            alignment: .topLeading
+                        )
                     }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 }
             } else {
                 GeometryReader { proxy in
