@@ -16,8 +16,14 @@ class WidgetBridge {
     List<QuotaSnapshot> snapshots,
   ) async {
     try {
-      final resolvedGroup =
-          await _appGroupChannel.invokeMethod<String>('resolve') ?? appGroupId;
+      var resolvedGroup = appGroupId;
+      try {
+        resolvedGroup =
+            await _appGroupChannel.invokeMethod<String>('resolve') ?? appGroupId;
+      } catch (_) {
+        // A headless iOS background isolate has no Flutter UI channel. The
+        // configured base group is still valid for the background callback.
+      }
       await HomeWidget.setAppGroupId(resolvedGroup);
       await HomeWidget.saveWidgetData<String>(
         'quota_accounts',

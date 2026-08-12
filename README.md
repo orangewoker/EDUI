@@ -66,4 +66,6 @@ Windows 不能构建 iOS App。推送 `ios` 分支后，GitHub Actions 会使用
 
 - 不要将真实 API Key 提交到 Git。
 - Widget 不接触 API Key 或 Cookie，只读取 App Group 中的名称和额度快照。
+- 进入 EDUI 或从后台回到 EDUI 时，会自动刷新超过 15 分钟的账户；小组件右上角的刷新按钮会直接打开 EDUI，并只刷新当前小组件选中的账户。WidgetKit 会按系统预算自动重新加载展示快照，刷新时间可能被 iOS 延后。
+- iOS 会在系统允许时通过后台任务刷新超过 30 分钟的账户；后台运行时间由系统决定，不保证固定时间。
 - OpenAI 兼容额度探针会产生一次极小的真实 API 请求，因此不适合高频刷新。

@@ -98,4 +98,31 @@ class AppController extends ChangeNotifier {
       await refreshOne(account);
     }
   }
+
+  Future<void> refreshAccounts(Iterable<String> accountIds) async {
+    final selected = accountIds.toSet();
+    if (selected.isEmpty) {
+      await refreshAll();
+      return;
+    }
+    for (final account in accounts.where(
+      (item) => item.enabled && selected.contains(item.id),
+    )) {
+      await refreshOne(account);
+    }
+  }
+
+  Future<void> refreshStale({
+    Duration maxAge = const Duration(minutes: 15),
+  }) async {
+    final cutoff = DateTime.now().subtract(maxAge);
+    final stale = accounts.where((account) {
+      if (!account.enabled) return false;
+      final snapshot = snapshotFor(account.id);
+      return snapshot == null || snapshot.updatedAt.isBefore(cutoff);
+    });
+    for (final account in stale) {
+      await refreshOne(account);
+    }
+  }
 }

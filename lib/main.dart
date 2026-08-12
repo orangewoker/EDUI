@@ -1,15 +1,51 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:home_widget/home_widget.dart';
+import 'package:workmanager/workmanager.dart';
 
 import 'app_controller.dart';
 import 'models/monitor_account.dart';
 import 'models/quota_snapshot.dart';
 import 'services/codex_oauth_credential.dart';
 import 'services/login_launcher.dart';
+import 'services/widget_bridge.dart';
+
+const _backgroundRefreshTask = 'com.orangewoker.edui.quota-refresh';
+
+@pragma('vm:entry-point')
+void _backgroundCallbackDispatcher() {
+  Workmanager().executeTask((task, inputData) async {
+    WidgetsFlutterBinding.ensureInitialized();
+    final controller = AppController();
+    await controller.initialize();
+    await controller.refreshStale(maxAge: const Duration(minutes: 30));
+    return true;
+  });
+}
+
+void _scheduleBackgroundRefresh() {
+  unawaited(() async {
+    try {
+      await Workmanager().registerPeriodicTask(
+        _backgroundRefreshTask,
+        'quota-refresh',
+        frequency: const Duration(minutes: 30),
+        constraints: Constraints(networkType: NetworkType.connected),
+      );
+    } catch (_) {
+      // iOS may reject a duplicate registration; the existing task remains
+      // scheduled and foreground refresh still works.
+    }
+  }());
+}
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  HomeWidget.setAppGroupId(WidgetBridge.appGroupId);
+  Workmanager().initialize(_backgroundCallbackDispatcher);
+  _scheduleBackgroundRefresh();
   runApp(const EDUIApp());
 }
 
@@ -20,17 +56,42 @@ class EDUIApp extends StatefulWidget {
   State<EDUIApp> createState() => _EDUIAppState();
 }
 
-class _EDUIAppState extends State<EDUIApp> {
+class _EDUIAppState extends State<EDUIApp> with WidgetsBindingObserver {
   final controller = AppController();
+  StreamSubscription<Uri?>? _widgetClicks;
 
   @override
   void initState() {
     super.initState();
-    controller.initialize();
+    WidgetsBinding.instance.addObserver(this);
+    _widgetClicks = HomeWidget.widgetClicked.listen(_handleWidgetUri);
+    controller.initialize().then((_) async {
+      _handleWidgetUri(await HomeWidget.initiallyLaunchedFromHomeWidget());
+      await controller.refreshStale();
+    });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      controller.refreshStale();
+    }
+  }
+
+  Future<void> _handleWidgetUri(Uri? uri) async {
+    if (!mounted || uri?.host != 'refresh') return;
+    final rawIds = uri!.queryParameters['accounts'] ?? '';
+    final accountIds = rawIds
+        .split(',')
+        .map((item) => item.trim())
+        .where((item) => item.isNotEmpty);
+    await controller.refreshAccounts(accountIds);
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _widgetClicks?.cancel();
     controller.dispose();
     super.dispose();
   }

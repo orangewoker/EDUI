@@ -302,6 +302,21 @@ struct QuotaTimelineProvider: AppIntentTimelineProvider {
     }
 }
 
+private struct WidgetRefreshButton: View {
+    let items: [QuotaItem]
+
+    var body: some View {
+        let ids = items.map(\.accountId).joined(separator: ",")
+        Link(destination: URL(string: "edui://refresh?accounts=\(ids.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ids)&homeWidget")!) {
+            Image(systemName: "arrow.clockwise")
+                .font(.system(size: 11, weight: .bold))
+                .frame(width: 24, height: 24)
+                .contentShape(Rectangle())
+        }
+        .accessibilityLabel("刷新额度")
+    }
+}
+
 struct EDUIWidgetView: View {
     @Environment(\.widgetFamily) private var family
     @Environment(\.widgetRenderingMode) private var renderingMode
@@ -495,6 +510,13 @@ struct EDUIWidgetView: View {
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 }
+            }
+        }
+        .overlay(alignment: .topTrailing) {
+            if #available(iOS 17.0, *), !visibleItems.isEmpty {
+                WidgetRefreshButton(items: visibleItems)
+                    .padding(.top, 7)
+                    .padding(.trailing, 7)
             }
         }
         .foregroundStyle(primaryText)

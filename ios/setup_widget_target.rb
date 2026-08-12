@@ -33,6 +33,14 @@ unless widget
   embed_phase.add_file_reference(widget.product_reference, true)
 end
 
+# Keep the widget's Swift source in the target even when the target already
+# exists in a checked-in Flutter project.
+if widget
+  swift_ref = group.files.find { |file| file.path == 'EDUIWidget.swift' } || group.new_file('EDUIWidget.swift')
+  widget.source_build_phase.add_file_reference(swift_ref) unless widget.source_build_phase.files.any? { |file| file.file_ref == swift_ref }
+end
+
+
 runner.build_configurations.each do |config|
   config.build_settings['CODE_SIGN_ENTITLEMENTS'] = 'Runner/Runner.entitlements'
   config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '17.0'
