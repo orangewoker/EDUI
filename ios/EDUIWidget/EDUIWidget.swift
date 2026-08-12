@@ -149,7 +149,16 @@ struct QuotaWidgetConfiguration: WidgetConfigurationIntent {
     static var title: LocalizedStringResource = "额度账户"
     static var description = IntentDescription("选择要在这个小组件中显示的 EDUI 账户；不选择时按尺寸自动显示。")
 
-    @Parameter(title: "显示账户", default: [])
+    @Parameter(
+        title: "显示账户",
+        default: [],
+        size: [
+            .systemSmall: IntentCollectionSize(min: 0, max: 2),
+            .systemMedium: IntentCollectionSize(min: 0, max: 4),
+            .systemLarge: IntentCollectionSize(min: 0, max: 20),
+            .systemExtraLarge: IntentCollectionSize(min: 0, max: 50),
+        ]
+    )
     var accounts: [MonitorAccountEntity]
 
     @Parameter(title: "外观", default: .liquidGlass)
@@ -331,11 +340,11 @@ struct EDUIWidgetView: View {
     private var visibleItems: [QuotaItem] {
         switch family {
         case .systemSmall:
-            return Array(entry.items.prefix(1))
-        case .systemMedium:
             return Array(entry.items.prefix(2))
-        case .systemLarge:
+        case .systemMedium:
             return Array(entry.items.prefix(4))
+        case .systemLarge:
+            return entry.items
         case .systemExtraLarge:
             return entry.items
         default:
@@ -345,43 +354,92 @@ struct EDUIWidgetView: View {
 
     private var cardIsCompact: Bool {
         switch family {
+        case .systemSmall:
+            return visibleItems.count > 1
         case .systemMedium:
             return visibleItems.count > 1
         case .systemLarge:
-            return visibleItems.count > 2
+            return visibleItems.count > 1
         case .systemExtraLarge:
-            return visibleItems.count > 4
+            return visibleItems.count > 1
         default:
             return false
         }
     }
 
-    private var gridColumns: [GridItem] {
-        let count: Int
+    private var gridColumnCount: Int {
+        let itemCount = max(visibleItems.count, 1)
         switch family {
         case .systemMedium:
-            count = min(max(visibleItems.count, 1), 2)
+            return itemCount == 1 ? 1 : 2
         case .systemLarge:
-            count = min(max(visibleItems.count, 1), 2)
+            if itemCount <= 2 { return itemCount }
+            if itemCount <= 4 { return 2 }
+            if itemCount <= 9 { return 3 }
+            return 4
         case .systemExtraLarge:
-            if visibleItems.count > 15 {
-                count = 6
-            } else if visibleItems.count > 8 {
-                count = 5
-            } else {
-                count = min(max(visibleItems.count, 1), 4)
-            }
+            if itemCount <= 2 { return itemCount }
+            if itemCount <= 4 { return 2 }
+            if itemCount <= 8 { return 4 }
+            if itemCount <= 15 { return 5 }
+            if itemCount <= 24 { return 6 }
+            if itemCount <= 35 { return 7 }
+            return 10
         default:
-            count = 1
+            return 1
         }
+    }
+
+    private var gridRowCount: Int {
+        max(1, Int(ceil(Double(visibleItems.count) / Double(gridColumnCount))))
+    }
+
+    private var gridSpacing: CGFloat {
+        switch family {
+        case .systemMedium:
+            return visibleItems.count > 2 ? 8 : 14
+        case .systemLarge:
+            if visibleItems.count > 12 { return 7 }
+            if visibleItems.count > 4 { return 10 }
+            return 14
+        case .systemExtraLarge:
+            if visibleItems.count > 24 { return 6 }
+            if visibleItems.count > 8 { return 8 }
+            return 14
+        default:
+            return 10
+        }
+    }
+
+    private var gridColumns: [GridItem] {
         return Array(
-            repeating: GridItem(.flexible(), spacing: family == .systemExtraLarge ? 18 : 14),
-            count: count
+            repeating: GridItem(.flexible(), spacing: gridSpacing),
+            count: gridColumnCount
         )
     }
 
     private var usesDenseGrid: Bool {
-        family == .systemExtraLarge && visibleItems.count > 8
+        switch family {
+        case .systemMedium:
+            return visibleItems.count > 2
+        case .systemLarge:
+            return visibleItems.count > 4
+        case .systemExtraLarge:
+            return visibleItems.count > 8
+        default:
+            return false
+        }
+    }
+
+    private var usesUltraDenseGrid: Bool {
+        switch family {
+        case .systemLarge:
+            return visibleItems.count > 9
+        case .systemExtraLarge:
+            return visibleItems.count > 15
+        default:
+            return false
+        }
     }
 
     var body: some View {
@@ -389,14 +447,42 @@ struct EDUIWidgetView: View {
             if visibleItems.isEmpty {
                 emptyView
             } else if family == .systemSmall {
-                accountCard(visibleItems[0], compact: true)
-            } else {
-                LazyVGrid(columns: gridColumns, alignment: .leading, spacing: 14) {
-                    ForEach(visibleItems) { item in
-                        accountCard(item, compact: cardIsCompact)
+                if visibleItems.count == 1 {
+                    accountCard(visibleItems[0], compact: false)
+                } else {
+                    VStack(alignment: .leading, spacing: 9) {
+                        ForEach(visibleItems) { item in
+                            smallCompactRow(item)
+                        }
                     }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            } else {
+                GeometryReader { proxy in
+                    let availableHeight = max(
+                        0,
+                        proxy.size.height - CGFloat(gridRowCount - 1) * gridSpacing
+                    )
+                    let cellHeight = availableHeight / CGFloat(gridRowCount)
+                    LazyVGrid(columns: gridColumns, alignment: .leading, spacing: gridSpacing) {
+                        ForEach(visibleItems) { item in
+                            Group {
+                                if usesUltraDenseGrid {
+                                    ultraDenseAccountCard(item)
+                                } else {
+                                    accountCard(item, compact: cardIsCompact)
+                                }
+                            }
+                            .frame(
+                                maxWidth: .infinity,
+                                minHeight: cellHeight,
+                                maxHeight: cellHeight,
+                                alignment: .topLeading
+                            )
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                }
             }
         }
         .foregroundStyle(primaryText)
@@ -468,6 +554,95 @@ struct EDUIWidgetView: View {
         }
     }
 
+    @ViewBuilder
+    private func smallCompactRow(_ item: QuotaItem) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            accountHeader(item, dense: true)
+            if item.isSubscription {
+                HStack(alignment: .top, spacing: 8) {
+                    ForEach(item.displayWindows) { window in
+                        smallQuotaSummary(window)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            } else {
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Text("可用余额")
+                        .font(.system(size: 9, weight: .medium))
+                        .foregroundStyle(secondaryText)
+                        .lineLimit(1)
+                    Spacer(minLength: 2)
+                    Text(item.formattedRemaining)
+                        .font(.system(size: 18, weight: .black, design: .rounded))
+                        .minimumScaleFactor(0.55)
+                        .lineLimit(1)
+                    Text(item.unit)
+                        .font(.system(size: 8, weight: .semibold))
+                        .foregroundStyle(secondaryText)
+                        .lineLimit(1)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func smallQuotaSummary(_ window: QuotaWindow) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(alignment: .firstTextBaseline, spacing: 2) {
+                Text(window.label)
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(secondaryText)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+                Spacer(minLength: 1)
+                Text("\(percentNumber(window.normalizedRemaining))%")
+                    .font(.system(size: 13, weight: .black, design: .rounded))
+                    .minimumScaleFactor(0.72)
+                    .lineLimit(1)
+            }
+            quotaProgress(window.ratio, height: 3)
+        }
+    }
+
+    private func ultraDenseAccountCard(_ item: QuotaItem) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            accountHeader(item, dense: true)
+            if item.isSubscription {
+                ForEach(item.displayWindows) { window in
+                    HStack(alignment: .firstTextBaseline, spacing: 2) {
+                        Text(window.label)
+                            .font(.system(size: 8, weight: .medium))
+                            .foregroundStyle(secondaryText)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.65)
+                        Spacer(minLength: 1)
+                        Text("\(percentNumber(window.normalizedRemaining))%")
+                            .font(.system(size: 11, weight: .bold, design: .rounded))
+                            .minimumScaleFactor(0.65)
+                            .lineLimit(1)
+                    }
+                    quotaProgress(window.ratio, height: 2)
+                }
+            } else {
+                Text("可用余额")
+                    .font(.system(size: 8, weight: .medium))
+                    .foregroundStyle(secondaryText)
+                    .lineLimit(1)
+                HStack(alignment: .firstTextBaseline, spacing: 2) {
+                    Text(item.formattedRemaining)
+                        .font(.system(size: 15, weight: .black, design: .rounded))
+                        .minimumScaleFactor(0.45)
+                        .lineLimit(1)
+                    Text(item.unit)
+                        .font(.system(size: 7, weight: .semibold))
+                        .foregroundStyle(secondaryText)
+                        .lineLimit(1)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     private func subscriptionCard(_ item: QuotaItem, compact: Bool) -> some View {
         let windows = item.displayWindows
         return VStack(alignment: .leading, spacing: compact ? 4 : 6) {
@@ -493,11 +668,11 @@ struct EDUIWidgetView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func accountHeader(_ item: QuotaItem) -> some View {
+    private func accountHeader(_ item: QuotaItem, dense: Bool = false) -> some View {
         HStack(spacing: 6) {
             Text(item.accountName.uppercased())
-                .font(.caption2.weight(.bold))
-                .tracking(1.0)
+                .font(dense ? .system(size: 9, weight: .bold) : .caption2.weight(.bold))
+                .tracking(dense ? 0.55 : 1.0)
                 .lineLimit(1)
             Spacer(minLength: 2)
             Circle()
@@ -604,7 +779,7 @@ struct EDUIWidgetView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func quotaProgress(_ value: Double) -> some View {
+    private func quotaProgress(_ value: Double, height: CGFloat = 4) -> some View {
         GeometryReader { proxy in
             ZStack(alignment: .leading) {
                 Capsule()
@@ -615,7 +790,7 @@ struct EDUIWidgetView: View {
                     .widgetAccentable()
             }
         }
-        .frame(height: 4)
+        .frame(height: height)
     }
 
     @ViewBuilder
