@@ -522,6 +522,16 @@ class _AccountEditorState extends State<AccountEditor> {
                 icon: const Icon(Icons.account_balance_wallet_rounded),
                 label: const Text('Sub2API 余额'),
               ),
+              OutlinedButton.icon(
+                onPressed: () => _applyPreset(
+                  MonitorAccount.amdDefault().copyWith(
+                    name: '中转站余额',
+                    baseUrl: '',
+                  ),
+                ),
+                icon: const Icon(Icons.hub_rounded),
+                label: const Text('New API / 中转站'),
+              ),
             ],
           ),
           const SizedBox(height: 16),
@@ -599,8 +609,10 @@ class _AccountEditorState extends State<AccountEditor> {
               child: ListTile(
                 contentPadding: EdgeInsets.zero,
                 leading: Icon(Icons.auto_awesome_rounded),
-                title: Text('自动选择可用模型'),
-                subtitle: Text('EDUI 会读取 /models，并自动尝试可用模型，无需手动填写。'),
+                title: Text('优先自动读取账户余额'),
+                subtitle: Text(
+                  '支持 Sub2API、New API / One API 的余额接口；站点未提供时才会自动选择模型做最小额度探测。',
+                ),
               ),
             ),
           if (officialOpenAI)

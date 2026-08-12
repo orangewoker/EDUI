@@ -83,6 +83,9 @@ void main() {
       if (request.url.path.endsWith('/v1/usage')) {
         return http.Response('{}', 404);
       }
+      if (request.url.path == '/api/status') {
+        return http.Response('{}', 404);
+      }
       if (request.url.path.endsWith('/models')) {
         return http.Response(
           jsonEncode({
@@ -220,9 +223,165 @@ void main() {
   });
 
   test(
+    'reads New API account balance without sending a model request',
+    () async {
+      final requestedPaths = <String>[];
+      final mock = MockClient((request) async {
+        requestedPaths.add(request.url.path);
+        if (request.url.path == '/v1/usage') {
+          return http.Response('{}', 404);
+        }
+        if (request.url.path == '/api/status') {
+          expect(request.headers['Authorization'], isNull);
+          return http.Response(
+            jsonEncode({
+              'data': {
+                'system_name': 'Example New API',
+                'quota_per_unit': 500000,
+                'quota_display_type': 'USD',
+                'display_in_currency': true,
+              },
+            }),
+            200,
+          );
+        }
+        expect(request.headers['Authorization'], 'Bearer relay-test-key');
+        if (request.url.path == '/v1/dashboard/billing/subscription') {
+          return http.Response(
+            jsonEncode({
+              'object': 'billing_subscription',
+              'hard_limit_usd': '8.318512',
+              'access_until': 0,
+            }),
+            200,
+          );
+        }
+        if (request.url.path == '/v1/dashboard/billing/usage') {
+          return http.Response(
+            jsonEncode({'object': 'list', 'total_usage': '286.7416'}),
+            200,
+          );
+        }
+        fail('unexpected request: ${request.method} ${request.url}');
+      });
+
+      final snapshot = await QuotaClient(client: mock).refresh(
+        MonitorAccount.amdDefault().copyWith(
+          name: 'New API relay',
+          baseUrl: 'https://relay.example.test/v1',
+        ),
+        'relay-test-key',
+      );
+
+      expect(snapshot.limit, closeTo(8.318512, 0.0000001));
+      expect(snapshot.used, closeTo(2.867416, 0.0000001));
+      expect(snapshot.remaining, closeTo(5.451096, 0.0000001));
+      expect(snapshot.unit, 'USD');
+      expect(snapshot.message, contains('New API'));
+      expect(requestedPaths, isNot(contains('/models')));
+      expect(requestedPaths, isNot(contains('/chat/completions')));
+    },
+  );
+
+  test(
+    'falls back to the New API token usage endpoint and converts quota',
+    () async {
+      final mock = MockClient((request) async {
+        if (request.url.path == '/v1/usage') {
+          return http.Response('{}', 404);
+        }
+        if (request.url.path == '/api/status') {
+          return http.Response(
+            jsonEncode({
+              'data': {'quota_per_unit': 500000, 'quota_display_type': 'USD'},
+            }),
+            200,
+          );
+        }
+        if (request.url.path.contains('/dashboard/billing/')) {
+          return http.Response('{}', 404);
+        }
+        if (request.url.path == '/api/usage/token/') {
+          expect(request.url.toString(), endsWith('/api/usage/token/'));
+          expect(request.headers['Authorization'], 'Bearer relay-test-key');
+          return http.Response(
+            jsonEncode({
+              'code': true,
+              'message': 'ok',
+              'data': {
+                'object': 'token_usage',
+                'total_granted': 5000000,
+                'total_used': 1000000,
+                'total_available': 4000000,
+                'unlimited_quota': false,
+                'expires_at': 0,
+              },
+            }),
+            200,
+          );
+        }
+        fail('unexpected request: ${request.method} ${request.url}');
+      });
+
+      final snapshot = await QuotaClient(client: mock).refresh(
+        MonitorAccount.amdDefault().copyWith(
+          baseUrl: 'https://relay.example.test/v1',
+        ),
+        'relay-test-key',
+      );
+
+      expect(snapshot.remaining, 8);
+      expect(snapshot.limit, 10);
+      expect(snapshot.used, 2);
+      expect(snapshot.unit, 'USD');
+      expect(snapshot.message, contains('Key'));
+    },
+  );
+
+  test('also auto-detects New API from the Sub2API preset', () async {
+    final mock = MockClient((request) async {
+      if (request.url.path == '/v1/usage') return http.Response('{}', 404);
+      if (request.url.path == '/api/status') {
+        return http.Response(
+          jsonEncode({
+            'data': {
+              'quota_per_unit': 500000,
+              'quota_display_type': 'CNY',
+              'usd_exchange_rate': 7.2,
+            },
+          }),
+          200,
+        );
+      }
+      if (request.url.path == '/v1/dashboard/billing/subscription') {
+        return http.Response(jsonEncode({'hard_limit_usd': 30}), 200);
+      }
+      if (request.url.path == '/v1/dashboard/billing/usage') {
+        return http.Response(jsonEncode({'total_usage': 1250}), 200);
+      }
+      fail('unexpected request: ${request.method} ${request.url}');
+    });
+
+    final snapshot = await QuotaClient(client: mock).refresh(
+      MonitorAccount.sub2ApiDefault().copyWith(
+        baseUrl: 'https://relay.example.test/v1',
+      ),
+      'relay-test-key',
+    );
+
+    expect(snapshot.remaining, 17.5);
+    expect(snapshot.limit, 30);
+    expect(snapshot.used, 12.5);
+    expect(snapshot.unit, 'CNY');
+  });
+
+  test(
     'falls back to token and request quotas from OpenAI-compatible headers',
     () async {
       final mock = MockClient((request) async {
+        if (request.url.path == '/api/status') {
+          return http.Response('{}', 404);
+        }
         if (request.url.path.endsWith('/models')) {
           return http.Response(
             jsonEncode({

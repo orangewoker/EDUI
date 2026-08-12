@@ -4,7 +4,7 @@ EDUI 是一款面向 iPhone 的模型额度监控工具。它可以读取模型�
 
 ## 已支持
 
-- AMD Radeon API/OpenAI 兼容服务：通过最小聊天请求自动读取 USD、Token 和请求数 `x-ratelimit-*` 响应头，不要求手动选择模型。
+- AMD Radeon API/OpenAI 兼容服务：优先自动识别 Sub2API、New API / One API 账户余额；站点未提供余额接口时，再通过最小聊天请求读取 USD、Token 和请求数 `x-ratelimit-*` 响应头，不要求手动选择模型。
 - DeepSeek：通过官方 `/user/balance` 接口读取余额。
 - OpenAI API：通过官方 Organization Costs API 汇总最近 30 天用量；可填写月预算上限以显示剩余额度。
 - Sub2API：使用官方兼容的 `GET /v1/usage` 读取账户钱包余额或订阅剩余额度，不发送聊天探测请求。
@@ -34,6 +34,10 @@ OpenAI API 组织账户不需要 Cookie。请使用组织 Admin API Key 调用�
 Sub2API 源码在网关路由中注册了 `/v1/usage`，钱包模式返回 `remaining`、`balance`、`unit`，订阅模式还返回 `quota` / `rate_limits`。已有的“OpenAI 兼容额度”账户也会先自动尝试这个接口，因此无需重新添加账户。
 
 这里不要填写后台面板的 `/api/v1/usage`：那是 JWT 登录后的面板用量接口；用户 API Key 余额接口是网关的 `/v1/usage`。
+
+### New API / One API 中转站
+
+选择“OpenAI 兼容额度（自动识别）”或快速配置里的“New API / 中转站”，只需填 Base URL 和 API Key。EDUI 会先识别站点的 `/api/status`，再读取 `/v1/dashboard/billing/subscription` 与 `/v1/dashboard/billing/usage`，计算账户剩余额，不会产生模型调用费用。新版 New API 仅开放 API Key 余额时，也会自动回退到带尾斜杠的 `/api/usage/token/` 并按站点公开的 `quota_per_unit` 换算币种。Base URL 可以填写站点根地址，也可以以 `/v1` 结尾。
 
 ## AMD Radeon API
 

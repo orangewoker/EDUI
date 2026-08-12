@@ -92,11 +92,13 @@ class QuotaClient {
     MonitorAccount account,
     String apiKey,
   ) async {
-    // Sub2API exposes the user's actual wallet/subscription balance through
-    // GET /v1/usage. Try that first so existing OpenAI-compatible accounts do
-    // not need to be recreated or manually configured.
+    // Prefer read-only balance endpoints before sending a minimal chat probe.
+    // This covers Sub2API and New API / One API relays without requiring a
+    // model selection or consuming tokens.
     final sub2ApiSnapshot = await _tryRefreshSub2Api(account, apiKey);
     if (sub2ApiSnapshot != null) return sub2ApiSnapshot;
+    final newApiSnapshot = await _tryRefreshNewApi(account, apiKey);
+    if (newApiSnapshot != null) return newApiSnapshot;
 
     final models = await _availableModels(account.baseUrl, apiKey);
     if (models.isEmpty) {
@@ -126,7 +128,11 @@ class QuotaClient {
       strict: true,
     );
     if (response == null) {
-      throw const QuotaException('未找到 Sub2API /v1/usage 余额接口，请检查站点地址和 API Key');
+      final newApiSnapshot = await _tryRefreshNewApi(account, apiKey);
+      if (newApiSnapshot != null) return newApiSnapshot;
+      throw const QuotaException(
+        '未找到 Sub2API /v1/usage 或 New API 余额接口，请检查站点地址和 API Key',
+      );
     }
     return _parseSub2ApiUsage(account, response);
   }
@@ -239,6 +245,172 @@ class QuotaClient {
       resetAt: resetAt,
       message: message,
     );
+  }
+
+  Future<QuotaSnapshot?> _tryRefreshNewApi(
+    MonitorAccount account,
+    String apiKey,
+  ) async {
+    final display = await _readNewApiDisplayConfig(account.baseUrl);
+    if (display == null) return null;
+
+    for (final endpoints in _newApiBillingCandidates(account.baseUrl)) {
+      try {
+        final responses = await Future.wait([
+          _client
+              .get(endpoints.subscription, headers: _apiKeyHeaders(apiKey))
+              .timeout(const Duration(seconds: 8)),
+          _client
+              .get(endpoints.usage, headers: _apiKeyHeaders(apiKey))
+              .timeout(const Duration(seconds: 8)),
+        ]);
+        final subscriptionResponse = responses[0];
+        final usageResponse = responses[1];
+        if (!_isSuccess(subscriptionResponse) || !_isSuccess(usageResponse)) {
+          continue;
+        }
+        final subscription = _decodeObject(subscriptionResponse.body);
+        final usage = _decodeObject(usageResponse.body);
+        if (subscription == null ||
+            usage == null ||
+            subscription['error'] != null ||
+            usage['error'] != null) {
+          continue;
+        }
+        final limit = _numberFrom(
+          subscription['hard_limit_usd'] ??
+              subscription['system_hard_limit_usd'] ??
+              subscription['soft_limit_usd'],
+        );
+        final totalUsage = _numberFrom(usage['total_usage']);
+        if (limit == null || totalUsage == null) continue;
+
+        final used = totalUsage / 100;
+        final remaining = (limit - used).clamp(0.0, double.infinity);
+        final accessUntil = _numberFrom(subscription['access_until']);
+        return QuotaSnapshot(
+          accountId: account.id,
+          accountName: account.name,
+          remaining: remaining,
+          limit: limit,
+          used: used,
+          unit: display.unit,
+          updatedAt: DateTime.now(),
+          resetAt: accessUntil == null || accessUntil <= 0
+              ? null
+              : _dateFrom(accessUntil),
+          message: 'New API / One API 账户余额',
+        );
+      } catch (_) {
+        // A non-New-API relay may return HTML, reject the route, or time out.
+        // Continue to the next known path and eventually use header probing.
+      }
+    }
+
+    return _tryRefreshNewApiTokenUsage(account, apiKey, display);
+  }
+
+  Future<QuotaSnapshot?> _tryRefreshNewApiTokenUsage(
+    MonitorAccount account,
+    String apiKey,
+    _NewApiDisplayConfig display,
+  ) async {
+    final quotaPerUnit = display.quotaPerUnit;
+    if (!display.usesRawTokens && (quotaPerUnit == null || quotaPerUnit <= 0)) {
+      return null;
+    }
+    try {
+      // Keep the trailing slash. Some New API deployments redirect the path
+      // without it, and a redirect can drop the Authorization header.
+      final uri = _endpoint(
+        _newApiPanelRoot(account.baseUrl).toString(),
+        'api/usage/token/',
+      );
+      final response = await _client
+          .get(uri, headers: _apiKeyHeaders(apiKey))
+          .timeout(const Duration(seconds: 8));
+      if (!_isSuccess(response)) return null;
+      final body = _decodeObject(response.body);
+      final data = body?['data'];
+      if (body == null ||
+          body['error'] != null ||
+          data is! Map ||
+          data['unlimited_quota'] == true) {
+        return null;
+      }
+      final availableRaw = _numberFrom(data['total_available']);
+      final grantedRaw = _numberFrom(data['total_granted']);
+      final usedRaw = _numberFrom(data['total_used']);
+      if (availableRaw == null) return null;
+
+      final remaining = display.convertQuota(availableRaw);
+      final limit = grantedRaw == null
+          ? null
+          : display.convertQuota(grantedRaw);
+      final used = usedRaw == null ? null : display.convertQuota(usedRaw);
+      if (remaining == null) return null;
+      final expiresAt = _numberFrom(data['expires_at']);
+      return QuotaSnapshot(
+        accountId: account.id,
+        accountName: account.name,
+        remaining: remaining.clamp(0.0, double.infinity),
+        limit: limit,
+        used: used,
+        unit: display.unit,
+        updatedAt: DateTime.now(),
+        resetAt: expiresAt == null || expiresAt <= 0
+            ? null
+            : _dateFrom(expiresAt),
+        message: 'New API Key 余额',
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<_NewApiDisplayConfig?> _readNewApiDisplayConfig(String baseUrl) async {
+    try {
+      final uri = _endpoint(_newApiPanelRoot(baseUrl).toString(), 'api/status');
+      final response = await _client
+          .get(uri, headers: const {'Accept': 'application/json'})
+          .timeout(const Duration(seconds: 6));
+      if (!_isSuccess(response)) return null;
+      final body = _decodeObject(response.body);
+      final rawData = body?['data'];
+      if (body == null || rawData is! Map) return null;
+      final data = Map<String, dynamic>.from(rawData);
+      final looksLikeNewApi =
+          data.containsKey('quota_per_unit') ||
+          data.containsKey('quota_display_type') ||
+          data.containsKey('display_in_currency');
+      if (!looksLikeNewApi) return null;
+      return _NewApiDisplayConfig.fromStatus(data);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  List<_NewApiBillingEndpoints> _newApiBillingCandidates(String baseUrl) {
+    final root = _newApiPanelRoot(baseUrl).toString();
+    return [
+      _NewApiBillingEndpoints(
+        subscription: _endpoint(root, 'v1/dashboard/billing/subscription'),
+        usage: _endpoint(root, 'v1/dashboard/billing/usage'),
+      ),
+      _NewApiBillingEndpoints(
+        subscription: _endpoint(root, 'dashboard/billing/subscription'),
+        usage: _endpoint(root, 'dashboard/billing/usage'),
+      ),
+    ];
+  }
+
+  Uri _newApiPanelRoot(String baseUrl) {
+    final parsed = Uri.parse(baseUrl.trim());
+    var path = parsed.path.replaceFirst(RegExp(r'/+$'), '');
+    if (path.toLowerCase().endsWith('/v1')) {
+      path = path.substring(0, path.length - 3);
+    }
+    return parsed.replace(path: path, query: null, fragment: null);
   }
 
   Future<QuotaSnapshot> _probeOpenAICompatible(
@@ -524,6 +696,9 @@ class QuotaClient {
     );
   }
 
+  bool _isSuccess(http.Response response) =>
+      response.statusCode >= 200 && response.statusCode < 300;
+
   double? _doubleHeader(Map<String, String> headers, String name) =>
       double.tryParse(_header(headers, name) ?? '');
 
@@ -613,6 +788,73 @@ class QuotaClient {
     }
     return DateTime.tryParse(raw);
   }
+}
+
+class _NewApiBillingEndpoints {
+  const _NewApiBillingEndpoints({
+    required this.subscription,
+    required this.usage,
+  });
+
+  final Uri subscription;
+  final Uri usage;
+}
+
+class _NewApiDisplayConfig {
+  const _NewApiDisplayConfig({
+    required this.unit,
+    required this.quotaPerUnit,
+    required this.exchangeRate,
+    required this.usesRawTokens,
+  });
+
+  factory _NewApiDisplayConfig.fromStatus(Map<String, dynamic> data) {
+    final type = '${data['quota_display_type'] ?? 'USD'}'.trim().toUpperCase();
+    final quotaPerUnit = _parseNumber(data['quota_per_unit']);
+    return switch (type) {
+      'TOKENS' => _NewApiDisplayConfig(
+        unit: 'Tokens',
+        quotaPerUnit: quotaPerUnit,
+        exchangeRate: 1,
+        usesRawTokens: true,
+      ),
+      'CNY' => _NewApiDisplayConfig(
+        unit: 'CNY',
+        quotaPerUnit: quotaPerUnit,
+        exchangeRate: _parseNumber(data['usd_exchange_rate']) ?? 1,
+        usesRawTokens: false,
+      ),
+      'CUSTOM' => _NewApiDisplayConfig(
+        unit: '${data['custom_currency_symbol'] ?? ''}'.trim().isEmpty
+            ? 'CUSTOM'
+            : '${data['custom_currency_symbol']}'.trim(),
+        quotaPerUnit: quotaPerUnit,
+        exchangeRate: _parseNumber(data['custom_currency_exchange_rate']) ?? 1,
+        usesRawTokens: false,
+      ),
+      _ => _NewApiDisplayConfig(
+        unit: 'USD',
+        quotaPerUnit: quotaPerUnit,
+        exchangeRate: 1,
+        usesRawTokens: false,
+      ),
+    };
+  }
+
+  final String unit;
+  final double? quotaPerUnit;
+  final double exchangeRate;
+  final bool usesRawTokens;
+
+  double? convertQuota(double value) {
+    if (usesRawTokens) return value;
+    final divisor = quotaPerUnit;
+    if (divisor == null || divisor <= 0) return null;
+    return value / divisor * exchangeRate;
+  }
+
+  static double? _parseNumber(dynamic value) =>
+      value is num ? value.toDouble() : double.tryParse('$value');
 }
 
 class QuotaException implements Exception {
