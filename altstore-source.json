@@ -1,0 +1,45 @@
+{
+  "name": "EDUI",
+  "identifier": "com.orangewoker.edui.source",
+  "subtitle": "在桌面和小组件中查看 AI 服务余额与订阅额度",
+  "description": "EDUI 支持 Codex、OpenCode Go、DeepSeek、Sub2API、New API 和其他兼容服务的余额或订阅额度监控。",
+  "iconURL": "https://raw.githubusercontent.com/orangewoker/EDUI/ios/assets/branding/edui-icon-1024.png",
+  "headerURL": "https://raw.githubusercontent.com/orangewoker/EDUI/ios/assets/branding/edui-icon-1024.png",
+  "website": "https://github.com/orangewoker/EDUI",
+  "sourceURL": "https://raw.githubusercontent.com/orangewoker/EDUI/ios/altstore-source.json",
+  "tintColor": "#5B67F1",
+  "featuredApps": [
+    "com.orangewoker.edui"
+  ],
+  "apps": [
+    {
+      "name": "EDUI",
+      "bundleIdentifier": "com.orangewoker.edui",
+      "developerName": "orangewoker",
+      "subtitle": "AI 余额与订阅额度小组件",
+      "localizedDescription": "监控 Codex、OpenCode Go、DeepSeek、Sub2API、New API 和其他兼容服务的余额或订阅额度，并通过 WidgetKit 小组件显示。",
+      "iconURL": "https://raw.githubusercontent.com/orangewoker/EDUI/ios/assets/branding/edui-icon-1024.png",
+      "tintColor": "#5B67F1",
+      "category": "utilities",
+      "versions": [
+        {
+          "version": "1.2.7",
+          "buildVersion": "28",
+          "date": "2026-08-13T15:24:30Z",
+          "localizedDescription": "适配 OpenCode Go 三档额度在小号和中号桌面小组件中的显示。",
+          "downloadURL": "https://github.com/orangewoker/EDUI/releases/download/ios-v1.2.7/EDUI-1.2.7-sidestore.ipa",
+          "size": 10378485,
+          "sha256": "8279632e3f8e8c58c78e9206a8d0da6e17a0e73b045e7e03c951e8e4fffa80a5",
+          "minOSVersion": "17.0"
+        }
+      ],
+      "appPermissions": {
+        "entitlements": [
+          "com.apple.security.application-groups"
+        ],
+        "privacy": {}
+      }
+    }
+  ],
+  "news": []
+}

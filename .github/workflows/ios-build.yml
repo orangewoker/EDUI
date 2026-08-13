@@ -42,7 +42,10 @@ jobs:
         run: flutter analyze --no-pub
 
       - name: Test
-        run: flutter test --no-pub
+        run: |
+          flutter test --no-pub
+          python3 -m unittest tool/test_update_altstore_source.py
+          python3 tool/update_altstore_source.py altstore-source.json --check
 
       - name: Build unsigned iOS app
         run: flutter build ios --release --no-codesign
@@ -108,3 +111,30 @@ jobs:
           files: |
             build/ios/EDUI-${{ steps.version.outputs.version }}-unsigned.ipa
             build/ios/EDUI-${{ steps.version.outputs.version }}-sidestore.ipa
+
+      - name: Update SideStore source
+        shell: bash
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          BUILD="${{ steps.version.outputs.build }}"
+          DOWNLOAD_URL="https://github.com/${{ github.repository }}/releases/download/ios-v${VERSION}/EDUI-${VERSION}-sidestore.ipa"
+          python3 tool/update_altstore_source.py altstore-source.json \
+            --ipa "build/ios/EDUI-${VERSION}-sidestore.ipa" \
+            --version "$VERSION" \
+            --build-version "$BUILD" \
+            --download-url "$DOWNLOAD_URL" \
+            --description "EDUI ${VERSION}：额度监控与小组件体验更新。"
+          python3 tool/update_altstore_source.py altstore-source.json --check
+
+      - name: Publish SideStore source manifest
+        shell: bash
+        run: |
+          if git diff --quiet -- altstore-source.json; then
+            echo "SideStore source is already current."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add altstore-source.json
+          git commit -m "Update SideStore source for ${{ steps.version.outputs.version }} [skip ci]"
+          git push origin HEAD:ios
