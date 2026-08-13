@@ -366,6 +366,28 @@ class _AccountCard extends StatelessWidget {
                       ],
                     ),
                   ),
+                  if (snapshot?.planLabel != null) ...[
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 7,
+                        vertical: 3,
+                      ),
+                      decoration: BoxDecoration(
+                        color: color.withValues(alpha: .10),
+                        borderRadius: BorderRadius.circular(99),
+                      ),
+                      child: Text(
+                        snapshot!.planLabel!,
+                        style: TextStyle(
+                          color: color,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: .6,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                  ],
                   if (onLogin != null)
                     IconButton(
                       tooltip: '打开官方登录',

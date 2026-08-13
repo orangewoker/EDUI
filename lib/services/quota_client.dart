@@ -578,7 +578,12 @@ class QuotaClient {
         .timeout(const Duration(seconds: 30));
     _requireSuccess(response);
     final body = jsonDecode(response.body);
-    final codexSnapshot = _parseCodexRateLimits(account, body);
+    final credential = CodexOAuthCredential.tryParse(apiKey);
+    final codexSnapshot = _parseCodexRateLimits(
+      account,
+      body,
+      credential: credential,
+    );
     if (codexSnapshot != null) return codexSnapshot;
     final rawValue = _numberAt(body, account.balanceField);
     var limit = account.limitField.trim().isEmpty
@@ -632,12 +637,31 @@ class QuotaClient {
     );
   }
 
-  QuotaSnapshot? _parseCodexRateLimits(MonitorAccount account, dynamic body) {
+  QuotaSnapshot? _parseCodexRateLimits(
+    MonitorAccount account,
+    dynamic body, {
+    CodexOAuthCredential? credential,
+  }) {
     if (body is! Map || body['rate_limit'] is! Map) return null;
     final rateLimit = Map<String, dynamic>.from(body['rate_limit'] as Map);
-    final primaryWindow = _codexWindow(rateLimit['primary_window'], '5 小时额度');
+    final responsePlanType = CodexOAuthCredential.normalizePlanType(
+      body['plan_type'] ??
+          body['chatgpt_plan_type'] ??
+          rateLimit['plan_type'] ??
+          rateLimit['chatgpt_plan_type'],
+    );
+    final planType = credential?.planType ?? responsePlanType;
+    final planLabel = credential?.planLabel ?? _planLabel(planType);
+    final weeklyPrimary = planType == 'plus' || planType == 'pro';
+    final primaryWindow = _codexWindow(
+      rateLimit['primary_window'],
+      weeklyPrimary ? '本周额度' : '5 小时额度',
+    );
     final secondaryWindow = _codexWindow(rateLimit['secondary_window'], '本周额度');
-    final windows = <QuotaWindow>[?primaryWindow, ?secondaryWindow];
+    final weeklyWindow = primaryWindow ?? secondaryWindow;
+    final windows = weeklyPrimary
+        ? <QuotaWindow>[?weeklyWindow]
+        : <QuotaWindow>[?primaryWindow, ?secondaryWindow];
     if (windows.isEmpty) return null;
 
     final primary = windows.first;
@@ -652,9 +676,23 @@ class QuotaClient {
       updatedAt: DateTime.now(),
       resetAt: primary.resetAt,
       message: windows.length > 1 ? 'Codex 5 小时与本周额度' : '${primary.label}剩余',
+      planLabel: planLabel,
       quotaWindows: windows,
     );
   }
+
+  String? _planLabel(String? planType) => switch (planType) {
+    'plus' => 'PLUS',
+    'pro' => 'PRO',
+    'k12' => 'K12',
+    'free' => 'FREE',
+    'team' => 'TEAM',
+    'business' => 'BUSINESS',
+    'enterprise' => 'ENTERPRISE',
+    'edu' => 'EDU',
+    final value? when value.isNotEmpty => value.toUpperCase(),
+    _ => null,
+  };
 
   QuotaWindow? _codexWindow(dynamic source, String label) {
     if (source is! Map) return null;

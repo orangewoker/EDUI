@@ -5,11 +5,28 @@ class CodexOAuthCredential {
     required this.accessToken,
     required this.accountId,
     this.expiresAt,
+    this.planType,
   });
 
   final String accessToken;
   final String accountId;
   final DateTime? expiresAt;
+  final String? planType;
+
+  String? get planLabel => switch (planType) {
+    'plus' => 'PLUS',
+    'pro' => 'PRO',
+    'k12' => 'K12',
+    'free' => 'FREE',
+    'team' => 'TEAM',
+    'business' => 'BUSINESS',
+    'enterprise' => 'ENTERPRISE',
+    'edu' => 'EDU',
+    final value? when value.isNotEmpty => value.toUpperCase(),
+    _ => null,
+  };
+
+  bool get usesWeeklyPrimary => planType == 'plus' || planType == 'pro';
 
   /// Drops unrelated backup data before the OAuth credential is persisted.
   String encodeForStorage() => jsonEncode({
@@ -17,6 +34,7 @@ class CodexOAuthCredential {
     'credentials': {
       'access_token': accessToken,
       'chatgpt_account_id': accountId,
+      if (planType != null) 'plan_type': planType,
       if (expiresAt != null) 'expires_at': expiresAt!.toUtc().toIso8601String(),
     },
   });
@@ -149,11 +167,65 @@ class CodexOAuthCredential {
     if (expiresAt != null && !expiresAt.isAfter(DateTime.now())) {
       throw const CodexOAuthCredentialException('Codex OAuth 凭证已过期，请重新导出后粘贴');
     }
+    final planType =
+        normalizePlanType(
+          _firstString(sources, const [
+            'plan_type',
+            'planType',
+            'chatgpt_plan_type',
+            'chatgptPlanType',
+            'subscription_plan',
+          ]),
+        ) ??
+        _planTypeFromClaims(claims);
     return CodexOAuthCredential(
       accessToken: token,
       accountId: accountId,
       expiresAt: expiresAt,
+      planType: planType,
     );
+  }
+
+  static String? normalizePlanType(dynamic value) {
+    final raw = '${value ?? ''}'.trim().toLowerCase();
+    if (raw.isEmpty) return null;
+    final compact = raw.replaceAll(RegExp(r'[^a-z0-9]+'), '');
+    return switch (compact) {
+      'chatgptplus' || 'plus' => 'plus',
+      'chatgptpro' || 'pro' => 'pro',
+      'k12' || 'chatgptk12' => 'k12',
+      'free' || 'chatgptfree' => 'free',
+      'team' || 'chatgptteam' => 'team',
+      'business' || 'chatgptbusiness' => 'business',
+      'enterprise' || 'chatgptenterprise' => 'enterprise',
+      'edu' || 'education' || 'chatgptedu' => 'edu',
+      _ => raw,
+    };
+  }
+
+  static String? _planTypeFromClaims(Map<String, dynamic> claims) {
+    final direct = normalizePlanType(
+      _firstString(
+        [claims],
+        const ['plan_type', 'chatgpt_plan_type', 'subscription_plan'],
+      ),
+    );
+    if (direct != null) return direct;
+    for (final key in const [
+      'https://api.openai.com/auth',
+      'https://api.openai.com/profile',
+    ]) {
+      final nested = claims[key];
+      if (nested is! Map) continue;
+      final plan = normalizePlanType(
+        _firstString(
+          [Map<String, dynamic>.from(nested)],
+          const ['plan_type', 'chatgpt_plan_type', 'subscription_plan'],
+        ),
+      );
+      if (plan != null) return plan;
+    }
+    return null;
   }
 
   static String _firstString(

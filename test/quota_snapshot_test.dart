@@ -12,6 +12,7 @@ void main() {
       used: 36,
       unit: '%',
       updatedAt: now,
+      planLabel: 'K12',
       quotaWindows: [
         QuotaWindow(
           label: '5 小时额度',
@@ -30,6 +31,7 @@ void main() {
     expect(restored.quotaWindows, hasLength(2));
     expect(restored.quotaWindows.last.label, '本周额度');
     expect(restored.quotaWindows.last.remainingPercent, 58);
+    expect(restored.planLabel, 'K12');
 
     final legacy = QuotaSnapshot.fromJson({
       'accountId': 'deepseek',

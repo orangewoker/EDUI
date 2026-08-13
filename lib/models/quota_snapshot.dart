@@ -37,6 +37,7 @@ class QuotaSnapshot {
     this.requestLimit,
     this.requestRemaining,
     this.message,
+    this.planLabel,
     this.quotaWindows = const [],
   });
 
@@ -51,6 +52,7 @@ class QuotaSnapshot {
   final int? requestLimit;
   final int? requestRemaining;
   final String? message;
+  final String? planLabel;
   final List<QuotaWindow> quotaWindows;
 
   double? get remainingRatio {
@@ -70,6 +72,7 @@ class QuotaSnapshot {
     'requestLimit': requestLimit,
     'requestRemaining': requestRemaining,
     'message': message,
+    'planLabel': planLabel,
     'quotaWindows': quotaWindows.map((item) => item.toJson()).toList(),
   };
 
@@ -87,6 +90,7 @@ class QuotaSnapshot {
     requestLimit: (json['requestLimit'] as num?)?.round(),
     requestRemaining: (json['requestRemaining'] as num?)?.round(),
     message: json['message'] as String?,
+    planLabel: json['planLabel'] as String?,
     quotaWindows: json['quotaWindows'] is List
         ? (json['quotaWindows'] as List)
               .whereType<Map>()

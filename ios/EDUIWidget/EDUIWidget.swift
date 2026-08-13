@@ -101,6 +101,7 @@ struct QuotaItem: Decodable, Identifiable {
     let requestLimit: Int?
     let requestRemaining: Int?
     let message: String?
+    var planLabel: String? = nil
     let quotaWindows: [QuotaWindow]?
     var providerType: String?
 
@@ -709,6 +710,17 @@ struct EDUIWidgetView: View {
                 .tracking(dense ? 0.55 : 1.0)
                 .lineLimit(1)
             Spacer(minLength: 2)
+            if let planLabel = item.planLabel, !planLabel.isEmpty {
+                Text(planLabel.uppercased())
+                    .font(.system(size: dense ? 7 : 8, weight: .black, design: .rounded))
+                    .tracking(0.45)
+                    .foregroundStyle(accentColor)
+                    .padding(.horizontal, dense ? 4 : 5)
+                    .padding(.vertical, 2)
+                    .background(accentColor.opacity(0.14), in: Capsule())
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.65)
+            }
             Circle()
                 .fill(item.remaining > 0 ? Color.green : Color.red)
                 .frame(width: 6, height: 6)

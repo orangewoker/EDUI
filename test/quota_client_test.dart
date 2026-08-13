@@ -686,6 +686,82 @@ void main() {
     expect(snapshot.quotaWindows.single.resetAt, resetAt.toLocal());
   });
 
+  test('labels Plus primary quota as weekly and exposes its plan', () async {
+    final mock = MockClient(
+      (_) async => http.Response(
+        jsonEncode({
+          'rate_limit': {
+            'primary_window': {'used_percent': 27},
+            'secondary_window': {'used_percent': 61},
+          },
+        }),
+        200,
+      ),
+    );
+    final export = jsonEncode({
+      'type': 'sub2api-data',
+      'accounts': [
+        {
+          'platform': 'openai',
+          'type': 'oauth',
+          'credentials': {
+            'access_token': 'plus-access-token',
+            'chatgpt_account_id': 'plus-account-id',
+            'plan_type': 'plus',
+          },
+        },
+      ],
+    });
+
+    final snapshot = await QuotaClient(
+      client: mock,
+    ).refresh(MonitorAccount.codexDefault(id: 'plus'), export);
+
+    expect(snapshot.planLabel, 'PLUS');
+    expect(snapshot.quotaWindows, hasLength(1));
+    expect(snapshot.quotaWindows.single.label, '本周额度');
+    expect(snapshot.quotaWindows.single.remainingPercent, 73);
+  });
+
+  test('keeps K12 five-hour and weekly quota windows', () async {
+    final mock = MockClient(
+      (_) async => http.Response(
+        jsonEncode({
+          'rate_limit': {
+            'primary_window': {'used_percent': 36},
+            'secondary_window': {'used_percent': 33},
+          },
+        }),
+        200,
+      ),
+    );
+    final export = jsonEncode({
+      'type': 'sub2api-data',
+      'accounts': [
+        {
+          'platform': 'openai',
+          'type': 'oauth',
+          'credentials': {
+            'access_token': 'k12-access-token',
+            'chatgpt_account_id': 'k12-account-id',
+            'plan_type': 'k12',
+          },
+        },
+      ],
+    });
+
+    final snapshot = await QuotaClient(
+      client: mock,
+    ).refresh(MonitorAccount.codexDefault(id: 'k12'), export);
+
+    expect(snapshot.planLabel, 'K12');
+    expect(snapshot.quotaWindows, hasLength(2));
+    expect(snapshot.quotaWindows[0].label, '5 小时额度');
+    expect(snapshot.quotaWindows[0].remainingPercent, 64);
+    expect(snapshot.quotaWindows[1].label, '本周额度');
+    expect(snapshot.quotaWindows[1].remainingPercent, 67);
+  });
+
   test('keeps raw Cookie credentials compatible with Codex usage', () async {
     final mock = MockClient((request) async {
       expect(request.headers['Cookie'], 'session=legacy-cookie');
