@@ -690,8 +690,8 @@ struct EDUIWidgetView: View {
         VStack(alignment: .leading, spacing: 3) {
             accountHeader(item, dense: true)
             if item.isSubscription {
-                HStack(alignment: .top, spacing: 8) {
-                    ForEach(Array(item.displayWindows.prefix(2))) { window in
+                HStack(alignment: .top, spacing: 5) {
+                    ForEach(item.displayWindows) { window in
                         smallQuotaSummary(window)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
@@ -719,18 +719,15 @@ struct EDUIWidgetView: View {
 
     private func smallQuotaSummary(_ window: QuotaWindow) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            HStack(alignment: .firstTextBaseline, spacing: 2) {
-                Text(window.label)
-                    .font(.system(size: 8, weight: .semibold))
-                    .foregroundStyle(secondaryText)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.72)
-                Spacer(minLength: 1)
-                Text("\(percentNumber(window.normalizedRemaining))%")
-                    .font(.system(size: 13, weight: .black, design: .rounded))
-                    .minimumScaleFactor(0.72)
-                    .lineLimit(1)
-            }
+            Text(shortWindowLabel(window.label))
+                .font(.system(size: 7, weight: .semibold))
+                .foregroundStyle(secondaryText)
+                .lineLimit(1)
+                .minimumScaleFactor(0.65)
+            Text("\(percentNumber(window.normalizedRemaining))%")
+                .font(.system(size: 12, weight: .black, design: .rounded))
+                .minimumScaleFactor(0.62)
+                .lineLimit(1)
             quotaProgress(window.ratio, height: 3)
         }
     }
@@ -775,12 +772,21 @@ struct EDUIWidgetView: View {
     }
 
     private func subscriptionCard(_ item: QuotaItem, compact: Bool) -> some View {
-        let windows = family == .systemSmall
-            ? Array(item.displayWindows.prefix(2))
-            : item.displayWindows
+        let windows = item.displayWindows
         return VStack(alignment: .leading, spacing: compact ? 4 : 6) {
             accountHeader(item)
-            if family == .systemSmall, windows.count > 1 {
+            if windows.count == 3,
+               family == .systemSmall || family == .systemMedium {
+                HStack(alignment: .top, spacing: family == .systemSmall ? 5 : 12) {
+                    ForEach(windows) { window in
+                        threeWindowColumn(
+                            window,
+                            showReset: family == .systemMedium && visibleItems.count == 1
+                        )
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            } else if family == .systemSmall, windows.count > 1 {
                 HStack(alignment: .top, spacing: 10) {
                     ForEach(windows) { window in
                         miniWindow(window)
@@ -886,6 +892,51 @@ struct EDUIWidgetView: View {
                     .font(.caption2.bold())
             }
             quotaProgress(window.ratio)
+        }
+    }
+
+    private func threeWindowColumn(_ window: QuotaWindow, showReset: Bool) -> some View {
+        VStack(alignment: .leading, spacing: family == .systemSmall ? 3 : 5) {
+            Text(shortWindowLabel(window.label))
+                .font(.system(size: family == .systemSmall ? 8 : 10, weight: .semibold))
+                .foregroundStyle(secondaryText)
+                .lineLimit(1)
+                .minimumScaleFactor(0.62)
+            HStack(alignment: .firstTextBaseline, spacing: 1) {
+                Text(percentNumber(window.normalizedRemaining))
+                    .font(
+                        .system(
+                            size: family == .systemSmall ? 20 : 26,
+                            weight: .black,
+                            design: .rounded
+                        )
+                    )
+                    .minimumScaleFactor(0.55)
+                    .lineLimit(1)
+                Text("%")
+                    .font(.system(size: family == .systemSmall ? 8 : 10, weight: .bold))
+            }
+            quotaProgress(window.ratio, height: family == .systemSmall ? 3 : 4)
+            if showReset, let raw = window.resetAt, let date = parseDate(raw) {
+                HStack(spacing: 2) {
+                    Image(systemName: "clock")
+                        .font(.system(size: 7, weight: .semibold))
+                    Text(date, style: .relative)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.62)
+                }
+                .font(.system(size: 8, weight: .medium))
+                .foregroundStyle(secondaryText)
+            }
+        }
+    }
+
+    private func shortWindowLabel(_ label: String) -> String {
+        switch label {
+        case "5 小时额度": return "5 小时"
+        case "本周额度": return "本周"
+        case "本月额度": return "本月"
+        default: return label
         }
     }
 
