@@ -23,6 +23,16 @@
       "category": "utilities",
       "versions": [
         {
+          "version": "1.2.8",
+          "buildVersion": "29",
+          "date": "2026-08-13T15:34:55Z",
+          "localizedDescription": "EDUI 1.2.8：额度监控与小组件体验更新。",
+          "downloadURL": "https://github.com/orangewoker/EDUI/releases/download/ios-v1.2.8/EDUI-1.2.8-sidestore.ipa",
+          "size": 10378480,
+          "sha256": "a29a526bd666d5ccff3c14aa842e3887ff8993244061ed6c3327a28a173e1b63",
+          "minOSVersion": "17.0"
+        },
+        {
           "version": "1.2.7",
           "buildVersion": "28",
           "date": "2026-08-13T15:24:30Z",
