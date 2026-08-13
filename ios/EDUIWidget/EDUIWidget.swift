@@ -4,6 +4,20 @@ import Security
 import SwiftUI
 import WidgetKit
 
+// These Security task APIs exist on iOS but are not exposed by the public
+// Swift module in every Xcode SDK. Bind their stable C symbols explicitly.
+private typealias EDUISecTask = OpaquePointer
+
+@_silgen_name("SecTaskCreateFromSelf")
+private func eduiSecTaskCreateFromSelf(_ allocator: CFAllocator?) -> EDUISecTask?
+
+@_silgen_name("SecTaskCopyValueForEntitlement")
+private func eduiSecTaskCopyValueForEntitlement(
+    _ task: EDUISecTask,
+    _ entitlement: CFString,
+    _ error: UnsafeMutablePointer<Unmanaged<CFError>?>?
+) -> CFTypeRef?
+
 private let baseAppGroupId = "group.com.orangewoker.edui"
 private let widgetKind = "EDUIWidget"
 
@@ -17,8 +31,8 @@ private var appGroupId: String {
 
 private func signedApplicationGroups() -> [String] {
     guard
-        let task = SecTaskCreateFromSelf(nil),
-        let groups = SecTaskCopyValueForEntitlement(
+        let task = eduiSecTaskCreateFromSelf(nil),
+        let groups = eduiSecTaskCopyValueForEntitlement(
             task,
             "com.apple.security.application-groups" as CFString,
             nil

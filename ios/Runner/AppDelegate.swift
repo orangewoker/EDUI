@@ -3,6 +3,20 @@ import Security
 import UIKit
 import UniformTypeIdentifiers
 
+// These Security task APIs exist on iOS but are not exposed by the public
+// Swift module in every Xcode SDK. Bind their stable C symbols explicitly.
+private typealias EDUISecTask = OpaquePointer
+
+@_silgen_name("SecTaskCreateFromSelf")
+private func eduiSecTaskCreateFromSelf(_ allocator: CFAllocator?) -> EDUISecTask?
+
+@_silgen_name("SecTaskCopyValueForEntitlement")
+private func eduiSecTaskCopyValueForEntitlement(
+  _ task: EDUISecTask,
+  _ entitlement: CFString,
+  _ error: UnsafeMutablePointer<Unmanaged<CFError>?>?
+) -> CFTypeRef?
+
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
   private let baseAppGroup = "group.com.orangewoker.edui"
@@ -129,8 +143,8 @@ import UniformTypeIdentifiers
   /// adding ALTAppGroups to Info.plist, so the signed value is authoritative.
   private func signedApplicationGroups() -> [String] {
     guard
-      let task = SecTaskCreateFromSelf(nil),
-      let groups = SecTaskCopyValueForEntitlement(
+      let task = eduiSecTaskCreateFromSelf(nil),
+      let groups = eduiSecTaskCopyValueForEntitlement(
         task,
         "com.apple.security.application-groups" as CFString,
         nil
