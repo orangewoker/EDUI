@@ -257,12 +257,11 @@ struct QuotaWidgetConfiguration: WidgetConfigurationIntent {
 
 struct QuotaTimelineProvider: AppIntentTimelineProvider {
     func placeholder(in context: Context) -> QuotaEntry {
-        QuotaEntry(
-            date: .now,
-            items: [previewSubscription, previewBalance],
-            message: nil,
-            appearance: .liquidGlass
-        )
+        // Some sideload re-signers let AppIntent configuration work but leave
+        // the home-screen widget in its placeholder phase indefinitely. Read
+        // the local shared payload here as a resilient fallback; the root view
+        // is explicitly unredacted so real data remains visible in that state.
+        loadEntry(selectedIds: [], appearance: .liquidGlass)
     }
 
     func snapshot(
@@ -344,6 +343,16 @@ struct QuotaTimelineProvider: AppIntentTimelineProvider {
     }
 
     private func loadEntry(for configuration: QuotaWidgetConfiguration) -> QuotaEntry {
+        loadEntry(
+            selectedIds: configuration.accounts.map(\.id),
+            appearance: configuration.appearance
+        )
+    }
+
+    private func loadEntry(
+        selectedIds: [String],
+        appearance: WidgetAppearance
+    ) -> QuotaEntry {
         guard
             let raw = sharedString(forKey: "quota_payload"),
             let data = raw.data(using: .utf8),
@@ -352,8 +361,10 @@ struct QuotaTimelineProvider: AppIntentTimelineProvider {
             return QuotaEntry(
                 date: .now,
                 items: [],
-                message: "打开 EDUI 并刷新账户后再添加小组件",
-                appearance: configuration.appearance
+                message: sharedString(forKey: "quota_accounts") == nil
+                    ? "未读取到共享账户，请打开 EDUI 重新同步"
+                    : "账户已共享，但额度数据尚未生成，请在 EDUI 中刷新",
+                appearance: appearance
             )
         }
 
@@ -366,7 +377,6 @@ struct QuotaTimelineProvider: AppIntentTimelineProvider {
             allItems[index].providerType = accountMetadata[allItems[index].accountId]
         }
 
-        let selectedIds = configuration.accounts.map(\.id)
         let items: [QuotaItem]
         if selectedIds.isEmpty {
             items = allItems
@@ -381,7 +391,7 @@ struct QuotaTimelineProvider: AppIntentTimelineProvider {
             date: .now,
             items: items,
             message: items.isEmpty ? "所选账户还没有同步数据" : nil,
-            appearance: configuration.appearance
+            appearance: appearance
         )
     }
 }
@@ -607,6 +617,9 @@ struct EDUIWidgetView: View {
         .containerBackground(for: .widget) {
             widgetBackground
         }
+        // Keep synchronized data visible even if a sideloaded installation is
+        // incorrectly retained in WidgetKit's placeholder redaction state.
+        .unredacted()
     }
 
     @ViewBuilder
