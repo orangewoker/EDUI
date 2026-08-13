@@ -39,6 +39,7 @@ class QuotaSnapshot {
     this.message,
     this.planLabel,
     this.quotaWindows = const [],
+    this.unlimited = false,
   });
 
   final String accountId;
@@ -54,6 +55,7 @@ class QuotaSnapshot {
   final String? message;
   final String? planLabel;
   final List<QuotaWindow> quotaWindows;
+  final bool unlimited;
 
   double? get remainingRatio {
     if (limit == null || limit! <= 0) return null;
@@ -74,6 +76,7 @@ class QuotaSnapshot {
     'message': message,
     'planLabel': planLabel,
     'quotaWindows': quotaWindows.map((item) => item.toJson()).toList(),
+    'unlimited': unlimited,
   };
 
   factory QuotaSnapshot.fromJson(Map<String, dynamic> json) => QuotaSnapshot(
@@ -99,5 +102,6 @@ class QuotaSnapshot {
               )
               .toList()
         : const [],
+    unlimited: json['unlimited'] == true,
   );
 }

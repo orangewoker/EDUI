@@ -554,17 +554,21 @@ class _AccountCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
                     Text(
-                      _formatNumber(snapshot!.remaining),
+                      snapshot!.unlimited
+                          ? '无限额度'
+                          : _formatNumber(snapshot!.remaining),
                       style: const TextStyle(
                         fontSize: 30,
                         fontWeight: FontWeight.w900,
                       ),
                     ),
-                    const SizedBox(width: 7),
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 5),
-                      child: Text(snapshot!.unit),
-                    ),
+                    if (!snapshot!.unlimited) ...[
+                      const SizedBox(width: 7),
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 5),
+                        child: Text(snapshot!.unit),
+                      ),
+                    ],
                     const Spacer(),
                     if (snapshot!.requestRemaining != null)
                       Text(

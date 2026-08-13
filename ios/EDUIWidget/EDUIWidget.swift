@@ -188,6 +188,7 @@ struct QuotaItem: Decodable, Identifiable {
     var planLabel: String? = nil
     let quotaWindows: [QuotaWindow]?
     var providerType: String?
+    let unlimited: Bool?
 
     var id: String { accountId }
 
@@ -197,6 +198,7 @@ struct QuotaItem: Decodable, Identifiable {
     }
 
     var formattedRemaining: String {
+        if unlimited == true { return "无限额度" }
         if abs(remaining) >= 100 { return String(format: "%.0f", remaining) }
         if abs(remaining) >= 1 { return String(format: "%.2f", remaining) }
         return String(format: "%.4f", remaining)
@@ -320,7 +322,8 @@ struct QuotaTimelineProvider: AppIntentTimelineProvider {
                     )
                 ),
             ],
-            providerType: "customJson"
+            providerType: "customJson",
+            unlimited: false
         )
     }
 
@@ -338,7 +341,8 @@ struct QuotaTimelineProvider: AppIntentTimelineProvider {
             requestRemaining: nil,
             message: "余额可用",
             quotaWindows: nil,
-            providerType: "deepSeek"
+            providerType: "deepSeek",
+            unlimited: false
         )
     }
 
@@ -707,10 +711,12 @@ struct EDUIWidgetView: View {
                         .font(.system(size: 18, weight: .black, design: .rounded))
                         .minimumScaleFactor(0.55)
                         .lineLimit(1)
-                    Text(item.unit)
-                        .font(.system(size: 8, weight: .semibold))
-                        .foregroundStyle(secondaryText)
-                        .lineLimit(1)
+                    if item.unlimited != true {
+                        Text(item.unit)
+                            .font(.system(size: 8, weight: .semibold))
+                            .foregroundStyle(secondaryText)
+                            .lineLimit(1)
+                    }
                 }
             }
         }
@@ -764,10 +770,12 @@ struct EDUIWidgetView: View {
                         .font(.system(size: 15, weight: .black, design: .rounded))
                         .minimumScaleFactor(0.45)
                         .lineLimit(1)
-                    Text(item.unit)
-                        .font(.system(size: 7, weight: .semibold))
-                        .foregroundStyle(secondaryText)
-                        .lineLimit(1)
+                    if item.unlimited != true {
+                        Text(item.unit)
+                            .font(.system(size: 7, weight: .semibold))
+                            .foregroundStyle(secondaryText)
+                            .lineLimit(1)
+                    }
                 }
             }
         }
@@ -818,7 +826,7 @@ struct EDUIWidgetView: View {
                     .minimumScaleFactor(0.65)
             }
             Circle()
-                .fill(item.remaining > 0 ? Color.green : Color.red)
+                .fill(item.unlimited == true || item.remaining > 0 ? Color.green : Color.red)
                 .frame(width: 6, height: 6)
         }
     }
@@ -902,10 +910,12 @@ struct EDUIWidgetView: View {
                     )
                     .minimumScaleFactor(0.55)
                     .lineLimit(1)
-                Text(item.unit)
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(secondaryText)
-                    .lineLimit(1)
+                if item.unlimited != true {
+                    Text(item.unit)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(secondaryText)
+                        .lineLimit(1)
+                }
             }
             if let ratio = item.ratio {
                 quotaProgress(ratio)

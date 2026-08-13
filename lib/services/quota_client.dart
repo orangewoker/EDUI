@@ -298,6 +298,17 @@ class QuotaClient {
     final display = await _readNewApiDisplayConfig(account.baseUrl);
     if (display == null) return null;
 
+    // The key-specific endpoint is authoritative. Some New API/HAPI sites
+    // expose OpenAI-compatible billing routes with a synthetic very large
+    // hard limit, especially for unlimited keys. Treating that value as a
+    // wallet balance produces results such as 100,000,000 USD.
+    final tokenUsage = await _tryRefreshNewApiTokenUsage(
+      account,
+      apiKey,
+      display,
+    );
+    if (tokenUsage != null) return tokenUsage;
+
     for (final endpoints in _newApiBillingCandidates(account.baseUrl)) {
       try {
         final responses = await Future.wait([
@@ -351,7 +362,7 @@ class QuotaClient {
       }
     }
 
-    return _tryRefreshNewApiTokenUsage(account, apiKey, display);
+    return null;
   }
 
   Future<QuotaSnapshot?> _tryRefreshNewApiTokenUsage(
@@ -379,8 +390,23 @@ class QuotaClient {
       if (body == null ||
           body['error'] != null ||
           data is! Map ||
-          data['unlimited_quota'] == true) {
+          data['object'] != 'token_usage') {
         return null;
+      }
+      if (data['unlimited_quota'] == true) {
+        final expiresAt = _numberFrom(data['expires_at']);
+        return QuotaSnapshot(
+          accountId: account.id,
+          accountName: account.name,
+          remaining: 0,
+          unit: display.unit,
+          updatedAt: DateTime.now(),
+          resetAt: expiresAt == null || expiresAt <= 0
+              ? null
+              : _dateFrom(expiresAt),
+          message: 'New API Key 无限额度',
+          unlimited: true,
+        );
       }
       final availableRaw = _numberFrom(data['total_available']);
       final grantedRaw = _numberFrom(data['total_granted']);

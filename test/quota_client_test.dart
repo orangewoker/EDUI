@@ -360,6 +360,9 @@ void main() {
           );
         }
         expect(request.headers['Authorization'], 'Bearer relay-test-key');
+        if (request.url.path == '/api/usage/token/') {
+          return http.Response('{}', 404);
+        }
         if (request.url.path == '/v1/dashboard/billing/subscription') {
           return http.Response(
             jsonEncode({
@@ -397,13 +400,62 @@ void main() {
     },
   );
 
+  test('prefers the New API token usage endpoint and converts quota', () async {
+    final mock = MockClient((request) async {
+      if (request.url.path == '/v1/usage') {
+        return http.Response('{}', 404);
+      }
+      if (request.url.path == '/api/status') {
+        return http.Response(
+          jsonEncode({
+            'data': {'quota_per_unit': 500000, 'quota_display_type': 'USD'},
+          }),
+          200,
+        );
+      }
+      if (request.url.path == '/api/usage/token/') {
+        expect(request.url.toString(), endsWith('/api/usage/token/'));
+        expect(request.headers['Authorization'], 'Bearer relay-test-key');
+        return http.Response(
+          jsonEncode({
+            'code': true,
+            'message': 'ok',
+            'data': {
+              'object': 'token_usage',
+              'total_granted': 5000000,
+              'total_used': 1000000,
+              'total_available': 4000000,
+              'unlimited_quota': false,
+              'expires_at': 0,
+            },
+          }),
+          200,
+        );
+      }
+      fail('unexpected request: ${request.method} ${request.url}');
+    });
+
+    final snapshot = await QuotaClient(client: mock).refresh(
+      MonitorAccount.amdDefault().copyWith(
+        baseUrl: 'https://relay.example.test/v1',
+      ),
+      'relay-test-key',
+    );
+
+    expect(snapshot.remaining, 8);
+    expect(snapshot.limit, 10);
+    expect(snapshot.used, 2);
+    expect(snapshot.unit, 'USD');
+    expect(snapshot.message, contains('Key'));
+  });
+
   test(
-    'falls back to the New API token usage endpoint and converts quota',
+    'recognizes an unlimited HAPI key instead of a synthetic balance',
     () async {
+      final requestedPaths = <String>[];
       final mock = MockClient((request) async {
-        if (request.url.path == '/v1/usage') {
-          return http.Response('{}', 404);
-        }
+        requestedPaths.add(request.url.path);
+        if (request.url.path == '/v1/usage') return http.Response('{}', 404);
         if (request.url.path == '/api/status') {
           return http.Response(
             jsonEncode({
@@ -412,25 +464,26 @@ void main() {
             200,
           );
         }
-        if (request.url.path.contains('/dashboard/billing/')) {
-          return http.Response('{}', 404);
-        }
         if (request.url.path == '/api/usage/token/') {
-          expect(request.url.toString(), endsWith('/api/usage/token/'));
-          expect(request.headers['Authorization'], 'Bearer relay-test-key');
           return http.Response(
             jsonEncode({
               'code': true,
               'message': 'ok',
               'data': {
                 'object': 'token_usage',
-                'total_granted': 5000000,
-                'total_used': 1000000,
-                'total_available': 4000000,
-                'unlimited_quota': false,
+                'total_granted': 0,
+                'total_used': 0,
+                'total_available': 0,
+                'unlimited_quota': true,
                 'expires_at': 0,
               },
             }),
+            200,
+          );
+        }
+        if (request.url.path.contains('/dashboard/billing/')) {
+          return http.Response(
+            jsonEncode({'hard_limit_usd': 100000000, 'total_usage': 0}),
             200,
           );
         }
@@ -439,16 +492,20 @@ void main() {
 
       final snapshot = await QuotaClient(client: mock).refresh(
         MonitorAccount.amdDefault().copyWith(
-          baseUrl: 'https://relay.example.test/v1',
+          name: 'HAPI',
+          baseUrl: 'http://192.168.100.200:33000/v1',
         ),
-        'relay-test-key',
+        'hapi-test-key',
       );
 
-      expect(snapshot.remaining, 8);
-      expect(snapshot.limit, 10);
-      expect(snapshot.used, 2);
-      expect(snapshot.unit, 'USD');
-      expect(snapshot.message, contains('Key'));
+      expect(snapshot.unlimited, isTrue);
+      expect(snapshot.message, contains('无限额度'));
+      expect(snapshot.limit, isNull);
+      expect(snapshot.remainingRatio, isNull);
+      expect(
+        requestedPaths,
+        isNot(contains('/v1/dashboard/billing/subscription')),
+      );
     },
   );
 
@@ -469,6 +526,9 @@ void main() {
       }
       if (request.url.path == '/v1/dashboard/billing/subscription') {
         return http.Response(jsonEncode({'hard_limit_usd': 30}), 200);
+      }
+      if (request.url.path == '/api/usage/token/') {
+        return http.Response('{}', 404);
       }
       if (request.url.path == '/v1/dashboard/billing/usage') {
         return http.Response(jsonEncode({'total_usage': 1250}), 200);

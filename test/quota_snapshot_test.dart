@@ -41,5 +41,16 @@ void main() {
       'updatedAt': now.toIso8601String(),
     });
     expect(legacy.quotaWindows, isEmpty);
+    expect(legacy.unlimited, isFalse);
+
+    final unlimited = QuotaSnapshot(
+      accountId: 'hapi',
+      accountName: 'HAPI',
+      remaining: 0,
+      unit: 'USD',
+      updatedAt: now,
+      unlimited: true,
+    );
+    expect(QuotaSnapshot.fromJson(unlimited.toJson()).unlimited, isTrue);
   });
 }
