@@ -8,19 +8,28 @@ class ConfigurationBackup {
     required this.accounts,
     required this.snapshots,
     required this.exportedAt,
+    this.credentials = const {},
   });
 
   final List<MonitorAccount> accounts;
   final List<QuotaSnapshot> snapshots;
   final DateTime exportedAt;
+  final Map<String, String> credentials;
+
+  bool get containsSecrets => credentials.values.any((item) => item.isNotEmpty);
 
   String encode() => const JsonEncoder.withIndent('  ').convert({
     'type': 'edui-configuration-backup',
-    'version': 1,
+    'version': 2,
     'exportedAt': exportedAt.toUtc().toIso8601String(),
-    'containsSecrets': false,
+    'containsSecrets': containsSecrets,
     'accounts': accounts.map((item) => item.toJson()).toList(),
     'snapshots': snapshots.map((item) => item.toJson()).toList(),
+    'credentials': {
+      for (final account in accounts)
+        if ((credentials[account.id] ?? '').isNotEmpty)
+          account.id: credentials[account.id],
+    },
   });
 
   factory ConfigurationBackup.decode(String raw) {
@@ -38,7 +47,7 @@ class ConfigurationBackup {
       throw const ConfigurationBackupException('这不是 EDUI 配置备份文件');
     }
     final version = int.tryParse('${root['version']}');
-    if (version != 1) {
+    if (version != 1 && version != 2) {
       throw const ConfigurationBackupException('不支持这个备份文件版本');
     }
     final accountValues = root['accounts'];
@@ -62,6 +71,16 @@ class ConfigurationBackup {
       throw const ConfigurationBackupException('无法读取备份中的账户配置');
     }
     final accountIds = accounts.map((item) => item.id).toSet();
+    final credentials = <String, String>{};
+    if (version == 2 && root['credentials'] is Map) {
+      for (final entry in (root['credentials'] as Map).entries) {
+        final accountId = '${entry.key}';
+        final credential = '${entry.value ?? ''}';
+        if (accountIds.contains(accountId) && credential.isNotEmpty) {
+          credentials[accountId] = credential;
+        }
+      }
+    }
     final snapshots = <QuotaSnapshot>[];
     final snapshotValues = root['snapshots'];
     if (snapshotValues is List) {
@@ -82,6 +101,7 @@ class ConfigurationBackup {
       exportedAt:
           DateTime.tryParse('${root['exportedAt']}')?.toUtc() ??
           DateTime.now().toUtc(),
+      credentials: credentials,
     );
   }
 }

@@ -6,7 +6,7 @@ import 'package:edui/services/configuration_backup.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('configuration backup round trips without secrets', () {
+  test('complete configuration backup round trips with credentials', () {
     final exportedAt = DateTime.utc(2026, 8, 13, 8);
     final backup = ConfigurationBackup(
       accounts: [MonitorAccount.codexDefault(id: 'codex')],
@@ -26,35 +26,15 @@ void main() {
         ),
       ],
       exportedAt: exportedAt,
+      credentials: const {'codex': 'oauth-secret-for-restore'},
     );
 
     final raw = backup.encode();
     expect(raw, contains('edui-configuration-backup'));
-    expect(raw, contains('"containsSecrets": false'));
+    expect(raw, contains('"containsSecrets": true'));
+    expect(raw, contains('oauth-secret-for-restore'));
     final decoded = jsonDecode(raw);
-    final secretKeys = <String>[];
-    void findSecretKeys(dynamic value) {
-      if (value is Map) {
-        for (final entry in value.entries) {
-          final key = '${entry.key}'.toLowerCase();
-          if (key == 'api_key' ||
-              key == 'access_token' ||
-              key == 'cookie' ||
-              key == 'credential' ||
-              key == 'credentials') {
-            secretKeys.add(key);
-          }
-          findSecretKeys(entry.value);
-        }
-      } else if (value is List) {
-        for (final item in value) {
-          findSecretKeys(item);
-        }
-      }
-    }
-
-    findSecretKeys(decoded);
-    expect(secretKeys, isEmpty);
+    expect(decoded['version'], 2);
 
     final restored = ConfigurationBackup.decode(raw);
     expect(restored.accounts, hasLength(1));
@@ -62,6 +42,8 @@ void main() {
     expect(restored.snapshots, hasLength(1));
     expect(restored.snapshots.single.planLabel, 'PLUS');
     expect(restored.exportedAt, exportedAt);
+    expect(restored.containsSecrets, isTrue);
+    expect(restored.credentials['codex'], 'oauth-secret-for-restore');
   });
 
   test('rejects unrelated and malformed backup files', () {
@@ -93,5 +75,39 @@ void main() {
     });
     final restored = ConfigurationBackup.decode(raw);
     expect(restored.snapshots, isEmpty);
+  });
+
+  test('keeps version one backups compatible without credentials', () {
+    final raw = jsonEncode({
+      'type': 'edui-configuration-backup',
+      'version': 1,
+      'exportedAt': '2026-08-13T08:00:00Z',
+      'containsSecrets': false,
+      'accounts': [MonitorAccount.codexDefault(id: 'legacy').toJson()],
+      'snapshots': <Object>[],
+    });
+
+    final restored = ConfigurationBackup.decode(raw);
+    expect(restored.accounts.single.id, 'legacy');
+    expect(restored.credentials, isEmpty);
+    expect(restored.containsSecrets, isFalse);
+  });
+
+  test('ignores credentials not linked to an exported account', () {
+    final raw = jsonEncode({
+      'type': 'edui-configuration-backup',
+      'version': 2,
+      'exportedAt': '2026-08-13T08:00:00Z',
+      'containsSecrets': true,
+      'accounts': [MonitorAccount.codexDefault(id: 'codex').toJson()],
+      'snapshots': <Object>[],
+      'credentials': {
+        'codex': 'valid-linked-secret',
+        'unknown': 'must-not-restore',
+      },
+    });
+
+    final restored = ConfigurationBackup.decode(raw);
+    expect(restored.credentials, {'codex': 'valid-linked-secret'});
   });
 }

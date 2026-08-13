@@ -48,11 +48,19 @@ class AppController extends ChangeNotifier {
   Future<bool> hasCredential(MonitorAccount account) =>
       _store.hasCredential(account);
 
-  String createConfigurationBackup() => ConfigurationBackup(
-    accounts: accounts,
-    snapshots: snapshots,
-    exportedAt: DateTime.now(),
-  ).encode();
+  Future<String> createConfigurationBackup() async {
+    final credentials = <String, String>{};
+    for (final account in accounts) {
+      final credential = await _store.readCredential(account);
+      if (credential.isNotEmpty) credentials[account.id] = credential;
+    }
+    return ConfigurationBackup(
+      accounts: accounts,
+      snapshots: snapshots,
+      exportedAt: DateTime.now(),
+      credentials: credentials,
+    ).encode();
+  }
 
   ConfigurationBackup inspectConfigurationBackup(String raw) =>
       ConfigurationBackup.decode(raw);
@@ -96,6 +104,12 @@ class AppController extends ChangeNotifier {
         _store.deleteAccountSecrets(accountId),
       for (final account in backup.accounts) _refreshThrottle.clear(account.id),
     ]);
+    for (final account in backup.accounts) {
+      final credential = backup.credentials[account.id];
+      if (credential != null && credential.isNotEmpty) {
+        await _store.writeCredential(account, credential);
+      }
+    }
     await _widgetBridge.sync(accounts, snapshots);
     notifyListeners();
     return backup.accounts.length;

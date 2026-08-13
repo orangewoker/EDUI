@@ -174,8 +174,8 @@ class DashboardPage extends StatelessWidget {
                           child: ListTile(
                             contentPadding: EdgeInsets.zero,
                             leading: Icon(Icons.cloud_upload_outlined),
-                            title: Text('备份到 iCloud Drive'),
-                            subtitle: Text('不包含 API Key、Cookie 和 OAuth token'),
+                            title: Text('保存完整备份'),
+                            subtitle: Text('包含账户配置与登录凭证'),
                           ),
                         ),
                         PopupMenuItem(
@@ -265,17 +265,38 @@ class DashboardPage extends StatelessWidget {
     const service = ICloudBackupService();
     try {
       if (action == _BackupAction.export) {
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('保存完整备份'),
+            content: const Text(
+              '备份文件将包含 API Key、Cookie 和 OAuth 凭证，恢复后可以直接使用。\n\n'
+              '请只保存到你自己的本机存储或私人 iCloud Drive，不要发送给其他人。',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('取消'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('继续保存'),
+              ),
+            ],
+          ),
+        );
+        if (!context.mounted || confirmed != true) return;
         final now = DateTime.now();
         final filename =
             'EDUI-backup-${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}.json';
         final exported = await service.export(
-          controller.createConfigurationBackup(),
+          await controller.createConfigurationBackup(),
           filename,
         );
         if (!context.mounted || !exported) return;
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(const SnackBar(content: Text('配置备份已保存；凭证未写入备份文件')));
+        ).showSnackBar(const SnackBar(content: Text('完整备份已保存，可用于直接恢复')));
         return;
       }
 
@@ -289,8 +310,7 @@ class DashboardPage extends StatelessWidget {
           content: Text(
             '备份包含 ${backup.accounts.length} 个账户。\n\n'
             '合并：保留现有账户，同 ID 配置以备份为准。\n'
-            '替换：清空现有配置后恢复。\n\n'
-            '备份不含安全凭证。合并时保留现有凭证，新增账户需要重新粘贴；替换时所有账户都需要重新粘贴。',
+            '替换：清空现有配置后恢复。\n\n${backup.containsSecrets ? '这是完整备份，恢复后账户配置和凭证可以直接使用。' : '这是旧版配置备份，不包含凭证；新增账户仍需重新填写凭证。'}',
           ),
           actions: [
             TextButton(
@@ -317,7 +337,11 @@ class DashboardPage extends StatelessWidget {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-            replace ? '已恢复 $count 个账户，请重新填写各账户凭证' : '已合并 $count 个账户；新增账户需要填写凭证',
+            backup.containsSecrets
+                ? '已完整恢复 $count 个账户，可以直接刷新使用'
+                : replace
+                ? '已恢复 $count 个账户，请重新填写各账户凭证'
+                : '已合并 $count 个账户；新增账户需要填写凭证',
           ),
         ),
       );
