@@ -9,6 +9,7 @@ import 'models/monitor_account.dart';
 import 'models/quota_snapshot.dart';
 import 'services/codex_oauth_credential.dart';
 import 'services/login_launcher.dart';
+import 'services/icloud_backup_service.dart';
 import 'services/widget_bridge.dart';
 
 void main() {
@@ -162,6 +163,31 @@ class DashboardPage extends StatelessWidget {
                           : null,
                       icon: const Icon(Icons.refresh_rounded),
                     ),
+                    PopupMenuButton<_BackupAction>(
+                      tooltip: 'iCloud 备份',
+                      icon: const Icon(Icons.cloud_outlined),
+                      onSelected: (action) =>
+                          _handleBackupAction(context, controller, action),
+                      itemBuilder: (context) => const [
+                        PopupMenuItem(
+                          value: _BackupAction.export,
+                          child: ListTile(
+                            contentPadding: EdgeInsets.zero,
+                            leading: Icon(Icons.cloud_upload_outlined),
+                            title: Text('备份到 iCloud Drive'),
+                            subtitle: Text('不包含 API Key、Cookie 和 OAuth token'),
+                          ),
+                        ),
+                        PopupMenuItem(
+                          value: _BackupAction.import,
+                          child: ListTile(
+                            contentPadding: EdgeInsets.zero,
+                            leading: Icon(Icons.cloud_download_outlined),
+                            title: Text('从 iCloud Drive 恢复'),
+                          ),
+                        ),
+                      ],
+                    ),
                     const SizedBox(width: 8),
                   ],
                 ),
@@ -231,6 +257,78 @@ class DashboardPage extends StatelessWidget {
     ).showSnackBar(const SnackBar(content: Text('无法打开官方 App 或登录网页')));
   }
 
+  Future<void> _handleBackupAction(
+    BuildContext context,
+    AppController controller,
+    _BackupAction action,
+  ) async {
+    const service = ICloudBackupService();
+    try {
+      if (action == _BackupAction.export) {
+        final now = DateTime.now();
+        final filename =
+            'EDUI-backup-${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}.json';
+        final exported = await service.export(
+          controller.createConfigurationBackup(),
+          filename,
+        );
+        if (!context.mounted || !exported) return;
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('配置备份已保存；凭证未写入备份文件')));
+        return;
+      }
+
+      final raw = await service.import();
+      if (!context.mounted || raw == null) return;
+      final backup = controller.inspectConfigurationBackup(raw);
+      final replace = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('恢复 EDUI 配置'),
+          content: Text(
+            '备份包含 ${backup.accounts.length} 个账户。\n\n'
+            '合并：保留现有账户，同 ID 配置以备份为准。\n'
+            '替换：清空现有配置后恢复。\n\n'
+            '备份不含安全凭证。合并时保留现有凭证，新增账户需要重新粘贴；替换时所有账户都需要重新粘贴。',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('取消'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('合并'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('替换'),
+            ),
+          ],
+        ),
+      );
+      if (!context.mounted || replace == null) return;
+      final count = await controller.restoreConfigurationBackup(
+        backup,
+        replace: replace,
+      );
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            replace ? '已恢复 $count 个账户，请重新填写各账户凭证' : '已合并 $count 个账户；新增账户需要填写凭证',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('$error')));
+    }
+  }
+
   Future<void> _openEditor(
     BuildContext context,
     AppController controller,
@@ -246,6 +344,8 @@ class DashboardPage extends StatelessWidget {
     );
   }
 }
+
+enum _BackupAction { export, import }
 
 class _SummaryPanel extends StatelessWidget {
   const _SummaryPanel({required this.controller});

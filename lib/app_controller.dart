@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'models/monitor_account.dart';
 import 'models/quota_snapshot.dart';
 import 'services/account_store.dart';
+import 'services/configuration_backup.dart';
 import 'services/quota_client.dart';
 import 'services/refresh_throttle.dart';
 import 'services/widget_bridge.dart';
@@ -46,6 +47,59 @@ class AppController extends ChangeNotifier {
 
   Future<bool> hasCredential(MonitorAccount account) =>
       _store.hasCredential(account);
+
+  String createConfigurationBackup() => ConfigurationBackup(
+    accounts: accounts,
+    snapshots: snapshots,
+    exportedAt: DateTime.now(),
+  ).encode();
+
+  ConfigurationBackup inspectConfigurationBackup(String raw) =>
+      ConfigurationBackup.decode(raw);
+
+  Future<int> restoreConfigurationBackup(
+    ConfigurationBackup backup, {
+    required bool replace,
+  }) async {
+    final credentialIds = replace
+        ? {
+            ...accounts.map((item) => item.id),
+            ...backup.accounts.map((item) => item.id),
+          }
+        : const <String>{};
+    if (replace) {
+      accounts = backup.accounts;
+      snapshots = backup.snapshots;
+    } else {
+      final accountMap = {for (final item in accounts) item.id: item};
+      for (final item in backup.accounts) {
+        accountMap[item.id] = item;
+      }
+      accounts = accountMap.values.toList();
+
+      final snapshotMap = {for (final item in snapshots) item.accountId: item};
+      for (final item in backup.snapshots) {
+        final current = snapshotMap[item.accountId];
+        if (current == null || item.updatedAt.isAfter(current.updatedAt)) {
+          snapshotMap[item.accountId] = item;
+        }
+      }
+      snapshots = snapshotMap.values
+          .where((item) => accountMap.containsKey(item.accountId))
+          .toList();
+    }
+    errors.clear();
+    await Future.wait([
+      _store.saveAccounts(accounts),
+      _store.saveSnapshots(snapshots),
+      for (final accountId in credentialIds)
+        _store.deleteAccountSecrets(accountId),
+      for (final account in backup.accounts) _refreshThrottle.clear(account.id),
+    ]);
+    await _widgetBridge.sync(accounts, snapshots);
+    notifyListeners();
+    return backup.accounts.length;
+  }
 
   Future<void> saveAccount(MonitorAccount account, String credential) async {
     final index = accounts.indexWhere((item) => item.id == account.id);
