@@ -157,6 +157,17 @@ class DashboardPage extends StatelessWidget {
                   title: const Text('EDUI'),
                   actions: [
                     IconButton(
+                      tooltip: '重新同步小组件',
+                      onPressed: () async {
+                        final message = await controller.resyncWidget();
+                        if (!context.mounted) return;
+                        ScaffoldMessenger.of(
+                          context,
+                        ).showSnackBar(SnackBar(content: Text(message)));
+                      },
+                      icon: const Icon(Icons.widgets_outlined),
+                    ),
+                    IconButton(
                       tooltip: '全部刷新',
                       onPressed: controller.refreshing.isEmpty
                           ? controller.refreshAll

@@ -20,50 +20,80 @@ private func eduiSecTaskCopyValueForEntitlement(
 
 private let baseAppGroupId = "group.com.orangewoker.edui"
 private let widgetKind = "EDUIWidget"
+private let widgetDataFilename = "edui-widget-data.json"
 
-private var appGroupId: String {
-    let signedGroups = signedApplicationGroups()
-    if let matched = preferredAppGroup(in: signedGroups) {
-        return matched
+private var readableAppGroups: [String] {
+    appGroupCandidates.filter {
+        FileManager.default.containerURL(
+            forSecurityApplicationGroupIdentifier: $0
+        ) != nil
     }
-    return preferredAppGroup(in: alternateAppGroups()) ?? baseAppGroupId
+}
+
+private var appGroupCandidates: [String] {
+    uniqueStrings(
+        signedApplicationGroups() + alternateAppGroups() + [baseAppGroupId]
+    )
 }
 
 private func signedApplicationGroups() -> [String] {
     guard
         let task = eduiSecTaskCreateFromSelf(nil),
-        let groups = eduiSecTaskCopyValueForEntitlement(
+        let value = eduiSecTaskCopyValueForEntitlement(
             task,
             "com.apple.security.application-groups" as CFString,
             nil
-        ) as? [String]
+        )
     else {
         return []
     }
-    return groups
+    return strings(from: value)
 }
 
 private func alternateAppGroups() -> [String] {
     let value = Bundle.main.object(forInfoDictionaryKey: "ALTAppGroups")
-    if let groups = value as? [String] { return groups }
-    if let group = value as? String { return [group] }
     if let groups = value as? [String: String] {
-        return Array(groups.keys) + Array(groups.values)
+        return uniqueStrings(Array(groups.values) + Array(groups.keys))
+    }
+    return strings(from: value)
+}
+
+private func strings(from value: Any?) -> [String] {
+    if let group = value as? String { return [group] }
+    if let groups = value as? [String] { return groups }
+    if let groups = value as? NSArray {
+        return groups.compactMap { $0 as? String }
     }
     return []
 }
 
-private func preferredAppGroup(in groups: [String]) -> String? {
-    let unique = Array(Set(groups.filter { !$0.isEmpty })).sorted()
-    if unique.contains(baseAppGroupId) { return baseAppGroupId }
-    if let matched = unique.first(where: {
-        $0.hasSuffix(".\(baseAppGroupId)") ||
-        $0.contains("orangewoker.edui") ||
-        $0.contains("com.orangewoker.edui")
-    }) {
-        return matched
+private func uniqueStrings(_ values: [String]) -> [String] {
+    var seen = Set<String>()
+    return values.filter { !$0.isEmpty && seen.insert($0).inserted }
+}
+
+private func sharedString(forKey key: String) -> String? {
+    for group in readableAppGroups {
+        if let raw = UserDefaults(suiteName: group)?.string(forKey: key),
+           !raw.isEmpty {
+            return raw
+        }
+        guard
+            let container = FileManager.default.containerURL(
+                forSecurityApplicationGroupIdentifier: group
+            ),
+            let data = try? Data(
+                contentsOf: container.appendingPathComponent(widgetDataFilename)
+            ),
+            let envelope = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let raw = envelope[key] as? String,
+            !raw.isEmpty
+        else {
+            continue
+        }
+        return raw
     }
-    return unique.count == 1 ? unique[0] : nil
+    return nil
 }
 
 enum WidgetAppearance: String, AppEnum, Sendable {
@@ -113,9 +143,8 @@ struct MonitorAccountQuery: EntityQuery {
     }
 
     static func loadAccounts() -> [MonitorAccountEntity] {
-        let defaults = UserDefaults(suiteName: appGroupId)
         guard
-            let raw = defaults?.string(forKey: "quota_accounts"),
+            let raw = sharedString(forKey: "quota_accounts"),
             let data = raw.data(using: .utf8),
             let decoded = try? JSONDecoder().decode([MonitorAccountEntity].self, from: data),
             !decoded.isEmpty
@@ -316,8 +345,7 @@ struct QuotaTimelineProvider: AppIntentTimelineProvider {
 
     private func loadEntry(for configuration: QuotaWidgetConfiguration) -> QuotaEntry {
         guard
-            let defaults = UserDefaults(suiteName: appGroupId),
-            let raw = defaults.string(forKey: "quota_payload"),
+            let raw = sharedString(forKey: "quota_payload"),
             let data = raw.data(using: .utf8),
             var allItems = try? JSONDecoder().decode([QuotaItem].self, from: data)
         else {

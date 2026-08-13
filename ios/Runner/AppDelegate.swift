@@ -2,6 +2,7 @@ import Flutter
 import Security
 import UIKit
 import UniformTypeIdentifiers
+import WidgetKit
 
 // These Security task APIs exist on iOS but are not exposed by the public
 // Swift module in every Xcode SDK. Bind their stable C symbols explicitly.
@@ -38,11 +39,14 @@ private func eduiSecTaskCopyValueForEntitlement(
       binaryMessenger: registrar!.messenger()
     )
     channel.setMethodCallHandler { [weak self] call, result in
-      guard call.method == "resolve" else {
+      switch call.method {
+      case "resolve":
+        result(self?.resolvedAppGroup() ?? self?.baseAppGroup)
+      case "sync":
+        self?.syncWidgetData(call, result: result)
+      default:
         result(FlutterMethodNotImplemented)
-        return
       }
-      result(self?.resolvedAppGroup() ?? self?.baseAppGroup)
     }
 
     let backupRegistrar = engineBridge.pluginRegistry.registrar(
@@ -130,12 +134,92 @@ private func eduiSecTaskCopyValueForEntitlement(
   }
 
   private func resolvedAppGroup() -> String {
-    let signedGroups = signedApplicationGroups()
-    if let matched = preferredAppGroup(in: signedGroups) {
-      return matched
+    writableAppGroups().first ?? baseAppGroup
+  }
+
+  private func syncWidgetData(
+    _ call: FlutterMethodCall,
+    result: @escaping FlutterResult
+  ) {
+    guard
+      let arguments = call.arguments as? [String: Any],
+      let accounts = arguments["accounts"] as? String,
+      let payload = arguments["payload"] as? String
+    else {
+      result(FlutterError(
+        code: "invalid_widget_data",
+        message: "小组件同步参数无效",
+        details: nil
+      ))
+      return
     }
-    let alternateGroups = alternateAppGroups()
-    return preferredAppGroup(in: alternateGroups) ?? baseAppGroup
+
+    let groups = writableAppGroups()
+    var writtenGroups: [String] = []
+    for group in groups {
+      guard writeWidgetData(accounts: accounts, payload: payload, to: group) else {
+        continue
+      }
+      writtenGroups.append(group)
+    }
+    guard !writtenGroups.isEmpty else {
+      result(FlutterError(
+        code: "app_group_unavailable",
+        message: "签名没有为 EDUI 主程序提供可写的 App Group",
+        details: ["candidates": appGroupCandidates()]
+      ))
+      return
+    }
+    WidgetCenter.shared.reloadTimelines(ofKind: "EDUIWidget")
+    result(["groups": writtenGroups, "count": writtenGroups.count])
+  }
+
+  private func writeWidgetData(
+    accounts: String,
+    payload: String,
+    to group: String
+  ) -> Bool {
+    guard let container = FileManager.default.containerURL(
+      forSecurityApplicationGroupIdentifier: group
+    ) else {
+      return false
+    }
+
+    let defaults = UserDefaults(suiteName: group)
+    defaults?.set(accounts, forKey: "quota_accounts")
+    defaults?.set(payload, forKey: "quota_payload")
+    defaults?.set(Date().timeIntervalSince1970, forKey: "quota_synced_at")
+    defaults?.synchronize()
+
+    do {
+      let envelope: [String: Any] = [
+        "quota_accounts": accounts,
+        "quota_payload": payload,
+        "quota_synced_at": Date().timeIntervalSince1970,
+      ]
+      let data = try JSONSerialization.data(withJSONObject: envelope)
+      try data.write(
+        to: container.appendingPathComponent("edui-widget-data.json"),
+        options: .atomic
+      )
+      return defaults?.string(forKey: "quota_accounts") == accounts
+    } catch {
+      return defaults?.string(forKey: "quota_accounts") == accounts
+    }
+  }
+
+  private func writableAppGroups() -> [String] {
+    appGroupCandidates().filter {
+      FileManager.default.containerURL(
+        forSecurityApplicationGroupIdentifier: $0
+      ) != nil
+    }
+  }
+
+  private func appGroupCandidates() -> [String] {
+    uniqueStrings(
+      signedApplicationGroups() + alternateAppGroups() + [baseAppGroup]
+    )
   }
 
   /// Reads the entitlement that is actually active after sideload re-signing.
@@ -144,38 +228,37 @@ private func eduiSecTaskCopyValueForEntitlement(
   private func signedApplicationGroups() -> [String] {
     guard
       let task = eduiSecTaskCreateFromSelf(nil),
-      let groups = eduiSecTaskCopyValueForEntitlement(
+      let value = eduiSecTaskCopyValueForEntitlement(
         task,
         "com.apple.security.application-groups" as CFString,
         nil
-      ) as? [String]
+      )
     else {
       return []
     }
-    return groups
+    return strings(from: value)
   }
 
   private func alternateAppGroups() -> [String] {
     let value = Bundle.main.object(forInfoDictionaryKey: "ALTAppGroups")
-    if let groups = value as? [String] { return groups }
-    if let group = value as? String { return [group] }
     if let groups = value as? [String: String] {
-      return Array(groups.keys) + Array(groups.values)
+      return uniqueStrings(Array(groups.values) + Array(groups.keys))
+    }
+    return strings(from: value)
+  }
+
+  private func strings(from value: Any?) -> [String] {
+    if let group = value as? String { return [group] }
+    if let groups = value as? [String] { return groups }
+    if let groups = value as? NSArray {
+      return groups.compactMap { $0 as? String }
     }
     return []
   }
 
-  private func preferredAppGroup(in groups: [String]) -> String? {
-    let unique = Array(Set(groups.filter { !$0.isEmpty })).sorted()
-    if unique.contains(baseAppGroup) { return baseAppGroup }
-    if let matched = unique.first(where: {
-      $0.hasSuffix(".\(baseAppGroup)") ||
-      $0.contains("orangewoker.edui") ||
-      $0.contains("com.orangewoker.edui")
-    }) {
-      return matched
-    }
-    return unique.count == 1 ? unique[0] : nil
+  private func uniqueStrings(_ values: [String]) -> [String] {
+    var seen = Set<String>()
+    return values.filter { !$0.isEmpty && seen.insert($0).inserted }
   }
 }
 

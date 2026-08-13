@@ -48,6 +48,14 @@ class AppController extends ChangeNotifier {
   Future<bool> hasCredential(MonitorAccount account) =>
       _store.hasCredential(account);
 
+  Future<String> resyncWidget() async {
+    final groupCount = await _widgetBridge.sync(accounts, snapshots);
+    if (groupCount <= 0) {
+      return '没有找到可写的共享空间。请在签名时保留 Widget，并让主程序和扩展使用同一个 App Group。';
+    }
+    return '已把 ${accounts.length} 个账户同步到 $groupCount 个共享空间。请关闭小组件编辑页后重新打开。';
+  }
+
   Future<String> createConfigurationBackup() async {
     final credentials = <String, String>{};
     for (final account in accounts) {
