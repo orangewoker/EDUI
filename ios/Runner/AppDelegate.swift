@@ -1,4 +1,5 @@
 import Flutter
+import Security
 import UIKit
 import UniformTypeIdentifiers
 
@@ -115,8 +116,52 @@ import UniformTypeIdentifiers
   }
 
   private func resolvedAppGroup() -> String {
-    let groups = Bundle.main.object(forInfoDictionaryKey: "ALTAppGroups") as? [String]
-    return groups?.first(where: { $0.contains(baseAppGroup) }) ?? baseAppGroup
+    let signedGroups = signedApplicationGroups()
+    if let matched = preferredAppGroup(in: signedGroups) {
+      return matched
+    }
+    let alternateGroups = alternateAppGroups()
+    return preferredAppGroup(in: alternateGroups) ?? baseAppGroup
+  }
+
+  /// Reads the entitlement that is actually active after sideload re-signing.
+  /// QuanNengSign and AltStore-family tools can rewrite App Groups without
+  /// adding ALTAppGroups to Info.plist, so the signed value is authoritative.
+  private func signedApplicationGroups() -> [String] {
+    guard
+      let task = SecTaskCreateFromSelf(nil),
+      let groups = SecTaskCopyValueForEntitlement(
+        task,
+        "com.apple.security.application-groups" as CFString,
+        nil
+      ) as? [String]
+    else {
+      return []
+    }
+    return groups
+  }
+
+  private func alternateAppGroups() -> [String] {
+    let value = Bundle.main.object(forInfoDictionaryKey: "ALTAppGroups")
+    if let groups = value as? [String] { return groups }
+    if let group = value as? String { return [group] }
+    if let groups = value as? [String: String] {
+      return Array(groups.keys) + Array(groups.values)
+    }
+    return []
+  }
+
+  private func preferredAppGroup(in groups: [String]) -> String? {
+    let unique = Array(Set(groups.filter { !$0.isEmpty })).sorted()
+    if unique.contains(baseAppGroup) { return baseAppGroup }
+    if let matched = unique.first(where: {
+      $0.hasSuffix(".\(baseAppGroup)") ||
+      $0.contains("orangewoker.edui") ||
+      $0.contains("com.orangewoker.edui")
+    }) {
+      return matched
+    }
+    return unique.count == 1 ? unique[0] : nil
   }
 }
 

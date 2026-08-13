@@ -30,6 +30,7 @@ class QuotaClient {
         account.authenticationType == AuthenticationType.manualCookie
             ? '请先填写 Cookie 或 Codex 导出 JSON'
             : '请先填写 API Key',
+        kind: QuotaErrorKind.authentication,
       );
     }
     for (var attempt = 0; ; attempt++) {
@@ -48,6 +49,7 @@ class QuotaClient {
           final target = host.isEmpty ? '服务站点' : host;
           throw QuotaException(
             '暂时无法连接 $target，已自动重试 ${_retryDelays.length} 次。请稍后再试，或检查网络与代理。',
+            kind: QuotaErrorKind.network,
           );
         }
         await Future<void>.delayed(_retryDelays[attempt]);
@@ -213,7 +215,11 @@ class QuotaClient {
         if (strict) rethrow;
       } catch (error) {
         if (strict) {
-          throw QuotaException('读取 Sub2API 余额失败：$error');
+          if (_isTransientNetworkError(error)) rethrow;
+          throw QuotaException(
+            '读取 Sub2API 余额失败：$error',
+            kind: QuotaErrorKind.server,
+          );
         }
       }
     }
@@ -766,10 +772,35 @@ class QuotaClient {
             lower.contains('model') ||
             lower.contains('not available') ||
             lower.contains('not found'));
+    final kind = switch (response.statusCode) {
+      401 || 403 => QuotaErrorKind.authentication,
+      429 => QuotaErrorKind.rateLimit,
+      >= 500 => QuotaErrorKind.server,
+      _ => QuotaErrorKind.configuration,
+    };
     throw QuotaException(
       'HTTP ${response.statusCode}：$detail',
       canTryNextModel: canTryNextModel,
+      kind: kind,
+      retryAfter: response.statusCode == 429
+          ? _retryAfter(response.headers)
+          : null,
     );
+  }
+
+  Duration? _retryAfter(Map<String, String> headers) {
+    final raw = _header(headers, 'retry-after')?.trim();
+    if (raw == null || raw.isEmpty) return null;
+    final seconds = int.tryParse(raw);
+    if (seconds != null) {
+      return Duration(seconds: seconds.clamp(1, 24 * 60 * 60));
+    }
+    try {
+      final remaining = HttpDate.parse(raw).difference(DateTime.now().toUtc());
+      return remaining > Duration.zero ? remaining : null;
+    } catch (_) {
+      return null;
+    }
   }
 
   bool _isSuccess(http.Response response) =>
@@ -933,10 +964,26 @@ class _NewApiDisplayConfig {
       value is num ? value.toDouble() : double.tryParse('$value');
 }
 
+enum QuotaErrorKind {
+  network,
+  authentication,
+  rateLimit,
+  configuration,
+  server,
+  unknown,
+}
+
 class QuotaException implements Exception {
-  const QuotaException(this.message, {this.canTryNextModel = false});
+  const QuotaException(
+    this.message, {
+    this.canTryNextModel = false,
+    this.kind = QuotaErrorKind.unknown,
+    this.retryAfter,
+  });
   final String message;
   final bool canTryNextModel;
+  final QuotaErrorKind kind;
+  final Duration? retryAfter;
   @override
   String toString() => message;
 }

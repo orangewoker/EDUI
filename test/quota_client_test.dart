@@ -71,10 +71,55 @@ void main() {
               (error) => error.message,
               'message',
               isNot(contains('SocketException')),
-            ),
+            )
+            .having((error) => error.kind, 'kind', QuotaErrorKind.network),
       ),
     );
     expect(attempts, 3);
+  });
+
+  test('classifies invalid credentials without a retry cooldown', () async {
+    final client = QuotaClient(
+      client: MockClient((_) async => http.Response('unauthorized', 401)),
+    );
+
+    await expectLater(
+      client.refresh(MonitorAccount.openAIDefault(), 'wrong-key'),
+      throwsA(
+        isA<QuotaException>()
+            .having(
+              (error) => error.kind,
+              'kind',
+              QuotaErrorKind.authentication,
+            )
+            .having((error) => error.retryAfter, 'retryAfter', isNull),
+      ),
+    );
+  });
+
+  test('classifies 429 and reads Retry-After seconds', () async {
+    final client = QuotaClient(
+      client: MockClient(
+        (_) async => http.Response(
+          'too many requests',
+          429,
+          headers: {'retry-after': '90'},
+        ),
+      ),
+    );
+
+    await expectLater(
+      client.refresh(MonitorAccount.openAIDefault(), 'admin-key'),
+      throwsA(
+        isA<QuotaException>()
+            .having((error) => error.kind, 'kind', QuotaErrorKind.rateLimit)
+            .having(
+              (error) => error.retryAfter,
+              'retryAfter',
+              const Duration(seconds: 90),
+            ),
+      ),
+    );
   });
 
   test('reads OpenAI organization costs with an admin key', () async {

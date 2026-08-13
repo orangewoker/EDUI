@@ -128,6 +128,7 @@ class AppController extends ChangeNotifier {
     await _store.writeCredential(account, credential);
     await _refreshThrottle.clear(account.id);
     errors.remove(account.id);
+    await _widgetBridge.sync(accounts, snapshots);
     notifyListeners();
   }
 
@@ -152,8 +153,9 @@ class AppController extends ChangeNotifier {
     try {
       final decision = await _refreshThrottle.decisionFor(account.id);
       if (!decision.allowed) {
-        errors[account.id] =
-            '刷新过于频繁，请 ${_formatCooldown(decision.remaining)}后再试。冷却期间不会发送请求。';
+        errors[account.id] = decision.reason == RefreshBlockReason.rateLimit
+            ? '服务商已触发限流，请 ${_formatCooldown(decision.remaining)}后再试。冷却期间不会发送请求。'
+            : '刚刚已刷新成功，请 ${_formatCooldown(decision.remaining)}后再刷新，避免重复请求。';
         return;
       }
 
@@ -168,9 +170,29 @@ class AppController extends ChangeNotifier {
       ];
       await _store.saveSnapshots(snapshots);
       await _widgetBridge.sync(accounts, snapshots);
+    } on QuotaException catch (error) {
+      if (error.kind == QuotaErrorKind.rateLimit) {
+        final cooldown = await _refreshThrottle.recordRateLimit(
+          account.id,
+          cooldown: error.retryAfter ?? const Duration(minutes: 5),
+        );
+        errors[account.id] =
+            '${error.message} 服务商要求限流，${_formatCooldown(cooldown)}后可再次刷新。';
+      } else {
+        await _refreshThrottle.clear(account.id);
+        errors[account.id] = switch (error.kind) {
+          QuotaErrorKind.network => '${error.message} 本次是网络/代理连接失败，不会触发账户冷却。',
+          QuotaErrorKind.authentication =>
+            '${error.message} 请检查凭证是否输错或已过期；不会触发账户冷却。',
+          QuotaErrorKind.configuration =>
+            '${error.message} 请检查站点地址和查询配置；不会触发账户冷却。',
+          QuotaErrorKind.server => '${error.message} 服务端暂时异常，不会触发账户冷却。',
+          _ => '${error.message} 本次失败不会触发账户冷却。',
+        };
+      }
     } catch (error) {
-      final cooldown = await _refreshThrottle.recordFailure(account.id);
-      errors[account.id] = '$error 为保护账户，${_formatCooldown(cooldown)}后可再次刷新。';
+      await _refreshThrottle.clear(account.id);
+      errors[account.id] = '$error 请检查输入内容；本次失败不会触发账户冷却。';
     } finally {
       refreshing.remove(account.id);
       notifyListeners();

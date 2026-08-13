@@ -1,5 +1,6 @@
 import AppIntents
 import Foundation
+import Security
 import SwiftUI
 import WidgetKit
 
@@ -7,8 +8,48 @@ private let baseAppGroupId = "group.com.orangewoker.edui"
 private let widgetKind = "EDUIWidget"
 
 private var appGroupId: String {
-    let groups = Bundle.main.object(forInfoDictionaryKey: "ALTAppGroups") as? [String]
-    return groups?.first(where: { $0.contains(baseAppGroupId) }) ?? baseAppGroupId
+    let signedGroups = signedApplicationGroups()
+    if let matched = preferredAppGroup(in: signedGroups) {
+        return matched
+    }
+    return preferredAppGroup(in: alternateAppGroups()) ?? baseAppGroupId
+}
+
+private func signedApplicationGroups() -> [String] {
+    guard
+        let task = SecTaskCreateFromSelf(nil),
+        let groups = SecTaskCopyValueForEntitlement(
+            task,
+            "com.apple.security.application-groups" as CFString,
+            nil
+        ) as? [String]
+    else {
+        return []
+    }
+    return groups
+}
+
+private func alternateAppGroups() -> [String] {
+    let value = Bundle.main.object(forInfoDictionaryKey: "ALTAppGroups")
+    if let groups = value as? [String] { return groups }
+    if let group = value as? String { return [group] }
+    if let groups = value as? [String: String] {
+        return Array(groups.keys) + Array(groups.values)
+    }
+    return []
+}
+
+private func preferredAppGroup(in groups: [String]) -> String? {
+    let unique = Array(Set(groups.filter { !$0.isEmpty })).sorted()
+    if unique.contains(baseAppGroupId) { return baseAppGroupId }
+    if let matched = unique.first(where: {
+        $0.hasSuffix(".\(baseAppGroupId)") ||
+        $0.contains("orangewoker.edui") ||
+        $0.contains("com.orangewoker.edui")
+    }) {
+        return matched
+    }
+    return unique.count == 1 ? unique[0] : nil
 }
 
 enum WidgetAppearance: String, AppEnum, Sendable {

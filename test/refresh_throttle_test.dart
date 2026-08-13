@@ -20,39 +20,39 @@ void main() {
     expect((await throttle.decisionFor('codex')).allowed, isTrue);
   });
 
-  test('failures back off through 1, 5, 15 and 30 minutes', () async {
+  test('rate limit honors the server cooldown without escalation', () async {
     var now = DateTime.utc(2026, 8, 12, 12);
     final throttle = RefreshThrottle(now: () => now);
-    const expected = [
-      Duration(minutes: 1),
-      Duration(minutes: 5),
-      Duration(minutes: 15),
-      Duration(minutes: 30),
-      Duration(minutes: 30),
-    ];
+    const cooldown = Duration(minutes: 2);
 
-    for (final cooldown in expected) {
-      expect(await throttle.recordFailure('codex'), cooldown);
-      final decision = await throttle.decisionFor('codex');
-      expect(decision.allowed, isFalse);
-      expect(decision.remaining, cooldown);
-      now = now.add(cooldown + const Duration(seconds: 1));
-    }
+    expect(
+      await throttle.recordRateLimit('codex', cooldown: cooldown),
+      cooldown,
+    );
+    final decision = await throttle.decisionFor('codex');
+    expect(decision.allowed, isFalse);
+    expect(decision.remaining, cooldown);
+    expect(decision.reason, RefreshBlockReason.rateLimit);
+
+    now = now.add(const Duration(minutes: 2, seconds: 1));
+    expect((await throttle.decisionFor('codex')).allowed, isTrue);
   });
 
-  test('success and account edits reset the failure backoff', () async {
+  test('clear removes success and rate-limit cooldowns', () async {
     var now = DateTime.utc(2026, 8, 12, 12);
     final throttle = RefreshThrottle(now: () => now);
 
-    await throttle.recordFailure('codex');
-    now = now.add(const Duration(minutes: 2));
-    expect(await throttle.recordFailure('codex'), const Duration(minutes: 5));
-
-    await throttle.recordSuccess('codex');
-    now = now.add(const Duration(minutes: 2));
-    expect(await throttle.recordFailure('codex'), const Duration(minutes: 1));
-
+    await throttle.recordRateLimit('codex');
     await throttle.clear('codex');
+    expect((await throttle.decisionFor('codex')).allowed, isTrue);
+  });
+
+  test('legacy failure backoff is ignored after upgrade', () async {
+    SharedPreferences.setMockInitialValues({
+      'refresh_throttle_v1':
+          '{"codex":{"consecutiveFailures":4,"nextAllowedAt":"2099-01-01T00:00:00.000Z"}}',
+    });
+    final throttle = RefreshThrottle();
     expect((await throttle.decisionFor('codex')).allowed, isTrue);
   });
 }

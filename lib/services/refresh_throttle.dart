@@ -7,21 +7,17 @@ class RefreshThrottle {
     Future<SharedPreferences>? preferences,
     DateTime Function()? now,
     this.successCooldown = const Duration(minutes: 1),
-    this.failureCooldowns = const [
-      Duration(minutes: 1),
-      Duration(minutes: 5),
-      Duration(minutes: 15),
-      Duration(minutes: 30),
-    ],
   }) : _preferences = preferences ?? SharedPreferences.getInstance(),
        _now = now ?? DateTime.now;
 
-  static const _storageKey = 'refresh_throttle_v1';
+  // V2 intentionally ignores the old V1 failure backoff. Older releases
+  // treated offline, proxy and credential errors as account risk and could
+  // leave users blocked for 30 minutes even though no rate limit occurred.
+  static const _storageKey = 'refresh_throttle_v2';
 
   final Future<SharedPreferences> _preferences;
   final DateTime Function() _now;
   final Duration successCooldown;
-  final List<Duration> failureCooldowns;
 
   Future<RefreshDecision> decisionFor(String accountId) async {
     final state = await _load();
@@ -30,36 +26,33 @@ class RefreshThrottle {
 
     final remaining = entry.nextAllowedAt.difference(_now());
     if (remaining <= Duration.zero) return const RefreshDecision.allowed();
-    return RefreshDecision.blocked(
-      remaining: remaining,
-      consecutiveFailures: entry.consecutiveFailures,
-    );
+    return RefreshDecision.blocked(remaining: remaining, reason: entry.reason);
   }
 
   Future<Duration> recordSuccess(String accountId) async {
     final state = await _load();
     state[accountId] = _RefreshState(
-      consecutiveFailures: 0,
       nextAllowedAt: _now().add(successCooldown),
+      reason: RefreshBlockReason.recentSuccess,
     );
     await _save(state);
     return successCooldown;
   }
 
-  Future<Duration> recordFailure(String accountId) async {
+  Future<Duration> recordRateLimit(
+    String accountId, {
+    Duration cooldown = const Duration(minutes: 5),
+  }) async {
     final state = await _load();
-    final failureCount = (state[accountId]?.consecutiveFailures ?? 0) + 1;
-    final cooldown =
-        failureCooldowns[(failureCount - 1).clamp(
-          0,
-          failureCooldowns.length - 1,
-        )];
+    final safeCooldown = cooldown <= Duration.zero
+        ? const Duration(minutes: 5)
+        : cooldown;
     state[accountId] = _RefreshState(
-      consecutiveFailures: failureCount,
-      nextAllowedAt: _now().add(cooldown),
+      nextAllowedAt: _now().add(safeCooldown),
+      reason: RefreshBlockReason.rateLimit,
     );
     await _save(state);
-    return cooldown;
+    return safeCooldown;
   }
 
   Future<void> clear(String accountId) async {
@@ -101,36 +94,36 @@ class RefreshDecision {
   const RefreshDecision.allowed()
     : allowed = true,
       remaining = Duration.zero,
-      consecutiveFailures = 0;
+      reason = null;
 
-  const RefreshDecision.blocked({
-    required this.remaining,
-    required this.consecutiveFailures,
-  }) : allowed = false;
+  const RefreshDecision.blocked({required this.remaining, required this.reason})
+    : allowed = false;
 
   final bool allowed;
   final Duration remaining;
-  final int consecutiveFailures;
+  final RefreshBlockReason? reason;
 }
 
+enum RefreshBlockReason { recentSuccess, rateLimit }
+
 class _RefreshState {
-  const _RefreshState({
-    required this.consecutiveFailures,
-    required this.nextAllowedAt,
-  });
+  const _RefreshState({required this.nextAllowedAt, required this.reason});
 
   factory _RefreshState.fromJson(Map<String, dynamic> json) => _RefreshState(
-    consecutiveFailures: int.tryParse('${json['consecutiveFailures']}') ?? 0,
     nextAllowedAt:
         DateTime.tryParse('${json['nextAllowedAt']}') ??
         DateTime.fromMillisecondsSinceEpoch(0),
+    reason: RefreshBlockReason.values.firstWhere(
+      (value) => value.name == json['reason'],
+      orElse: () => RefreshBlockReason.recentSuccess,
+    ),
   );
 
-  final int consecutiveFailures;
   final DateTime nextAllowedAt;
+  final RefreshBlockReason reason;
 
   Map<String, dynamic> toJson() => {
-    'consecutiveFailures': consecutiveFailures,
     'nextAllowedAt': nextAllowedAt.toIso8601String(),
+    'reason': reason.name,
   };
 }
