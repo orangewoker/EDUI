@@ -493,7 +493,7 @@ void main() {
       final snapshot = await QuotaClient(client: mock).refresh(
         MonitorAccount.amdDefault().copyWith(
           name: 'HAPI',
-          baseUrl: 'http://192.168.100.200:33000/v1',
+          baseUrl: 'https://hapi.example.test/v1',
         ),
         'hapi-test-key',
       );
