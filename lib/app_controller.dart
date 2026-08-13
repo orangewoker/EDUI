@@ -4,6 +4,7 @@ import 'models/monitor_account.dart';
 import 'models/quota_snapshot.dart';
 import 'services/account_store.dart';
 import 'services/configuration_backup.dart';
+import 'services/new_api_credential.dart';
 import 'services/quota_client.dart';
 import 'services/refresh_throttle.dart';
 import 'services/widget_bridge.dart';
@@ -123,7 +124,11 @@ class AppController extends ChangeNotifier {
     return backup.accounts.length;
   }
 
-  Future<void> saveAccount(MonitorAccount account, String credential) async {
+  Future<void> saveAccount(
+    MonitorAccount account,
+    String credential, {
+    String newApiDashboardCredential = '',
+  }) async {
     final index = accounts.indexWhere((item) => item.id == account.id);
     if (index < 0) {
       accounts = [...accounts, account];
@@ -133,7 +138,20 @@ class AppController extends ChangeNotifier {
       accounts = updated;
     }
     await _store.saveAccounts(accounts);
-    await _store.writeCredential(account, credential);
+    final isNewApiCompatible =
+        account.providerType == ProviderType.amdRadeon ||
+        account.providerType == ProviderType.sub2Api;
+    if (isNewApiCompatible) {
+      final existing = await _store.readCredential(account);
+      final merged = NewApiCredential.merge(
+        existing,
+        apiKey: credential,
+        dashboardToken: newApiDashboardCredential,
+      );
+      await _store.writeCredential(account, merged);
+    } else {
+      await _store.writeCredential(account, credential);
+    }
     await _refreshThrottle.clear(account.id);
     errors.remove(account.id);
     await _widgetBridge.sync(accounts, snapshots);

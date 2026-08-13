@@ -449,65 +449,110 @@ void main() {
     expect(snapshot.message, contains('Key'));
   });
 
-  test(
-    'recognizes an unlimited HAPI key instead of a synthetic balance',
-    () async {
-      final requestedPaths = <String>[];
-      final mock = MockClient((request) async {
-        requestedPaths.add(request.url.path);
-        if (request.url.path == '/v1/usage') return http.Response('{}', 404);
-        if (request.url.path == '/api/status') {
-          return http.Response(
-            jsonEncode({
-              'data': {'quota_per_unit': 500000, 'quota_display_type': 'USD'},
-            }),
-            200,
-          );
-        }
-        if (request.url.path == '/api/usage/token/') {
-          return http.Response(
-            jsonEncode({
-              'code': true,
-              'message': 'ok',
-              'data': {
-                'object': 'token_usage',
-                'total_granted': 0,
-                'total_used': 0,
-                'total_available': 0,
-                'unlimited_quota': true,
-                'expires_at': 0,
-              },
-            }),
-            200,
-          );
-        }
-        if (request.url.path.contains('/dashboard/billing/')) {
-          return http.Response(
-            jsonEncode({'hard_limit_usd': 100000000, 'total_usage': 0}),
-            200,
-          );
-        }
-        fail('unexpected request: ${request.method} ${request.url}');
-      });
+  test('rejects the unlimited-key sentinel as an account balance', () async {
+    final requestedPaths = <String>[];
+    final mock = MockClient((request) async {
+      requestedPaths.add(request.url.path);
+      if (request.url.path == '/v1/usage') return http.Response('{}', 404);
+      if (request.url.path == '/api/status') {
+        return http.Response(
+          jsonEncode({
+            'data': {'quota_per_unit': 500000, 'quota_display_type': 'USD'},
+          }),
+          200,
+        );
+      }
+      if (request.url.path == '/api/usage/token/') {
+        return http.Response(
+          jsonEncode({
+            'code': true,
+            'message': 'ok',
+            'data': {
+              'object': 'token_usage',
+              'total_granted': 0,
+              'total_used': 0,
+              'total_available': 0,
+              'unlimited_quota': true,
+              'expires_at': 0,
+            },
+          }),
+          200,
+        );
+      }
+      if (request.url.path.contains('/dashboard/billing/')) {
+        return http.Response(
+          jsonEncode({'hard_limit_usd': 100000000, 'total_usage': 0}),
+          200,
+        );
+      }
+      fail('unexpected request: ${request.method} ${request.url}');
+    });
 
-      final snapshot = await QuotaClient(client: mock).refresh(
+    await expectLater(
+      QuotaClient(client: mock).refresh(
         MonitorAccount.amdDefault().copyWith(
           name: 'HAPI',
           baseUrl: 'https://hapi.example.test/v1',
         ),
         'hapi-test-key',
-      );
+      ),
+      throwsA(
+        isA<QuotaException>()
+            .having((error) => error.kind, 'kind', QuotaErrorKind.configuration)
+            .having((error) => error.message, 'message', contains('登录 Token')),
+      ),
+    );
 
-      expect(snapshot.unlimited, isTrue);
-      expect(snapshot.message, contains('无限额度'));
-      expect(snapshot.limit, isNull);
-      expect(snapshot.remainingRatio, isNull);
-      expect(
-        requestedPaths,
-        isNot(contains('/v1/dashboard/billing/subscription')),
-      );
-    },
-  );
+    expect(requestedPaths, contains('/v1/dashboard/billing/subscription'));
+    expect(requestedPaths, isNot(contains('/models')));
+    expect(requestedPaths, isNot(contains('/chat/completions')));
+  });
+
+  test('reads a New API user wallet with a dashboard access token', () async {
+    final requestedPaths = <String>[];
+    final mock = MockClient((request) async {
+      requestedPaths.add(request.url.path);
+      if (request.url.path == '/v1/usage') return http.Response('{}', 404);
+      if (request.url.path == '/api/status') {
+        return http.Response(
+          jsonEncode({
+            'data': {'quota_per_unit': 500000, 'quota_display_type': 'USD'},
+          }),
+          200,
+        );
+      }
+      if (request.url.path == '/api/user/self') {
+        expect(request.headers['Authorization'], 'Bearer dashboard-token');
+        return http.Response(
+          jsonEncode({
+            'success': true,
+            'data': {'quota': 4159256, 'used_quota': 1433744},
+          }),
+          200,
+        );
+      }
+      fail('unexpected request: ${request.method} ${request.url}');
+    });
+
+    final snapshot = await QuotaClient(client: mock).refresh(
+      MonitorAccount.amdDefault().copyWith(
+        name: 'HAPI',
+        baseUrl: 'https://hapi.example.test/v1',
+      ),
+      jsonEncode({
+        'type': 'edui-new-api-credential',
+        'api_key': 'hapi-test-key',
+        'dashboard_access_token': 'dashboard-token',
+      }),
+    );
+
+    expect(snapshot.remaining, closeTo(8.318512, 0.0000001));
+    expect(snapshot.used, closeTo(2.867488, 0.0000001));
+    expect(snapshot.limit, closeTo(11.186, 0.0000001));
+    expect(snapshot.message, contains('用户账户余额'));
+    expect(requestedPaths, isNot(contains('/api/usage/token/')));
+    expect(requestedPaths, isNot(contains('/chat/completions')));
+  });
 
   test('also auto-detects New API from the Sub2API preset', () async {
     final mock = MockClient((request) async {

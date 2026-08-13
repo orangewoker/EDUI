@@ -47,6 +47,7 @@ class AccountStore {
     try {
       return (jsonDecode(raw) as List)
           .whereType<Map>()
+          .where((item) => item['unlimited'] != true)
           .map(
             (item) => QuotaSnapshot.fromJson(Map<String, dynamic>.from(item)),
           )

@@ -7,6 +7,7 @@ import 'package:http/http.dart' as http;
 import '../models/monitor_account.dart';
 import '../models/quota_snapshot.dart';
 import 'codex_oauth_credential.dart';
+import 'new_api_credential.dart';
 
 class QuotaClient {
   QuotaClient({
@@ -130,14 +131,26 @@ class QuotaClient {
 
   Future<QuotaSnapshot> _refreshOpenAICompatible(
     MonitorAccount account,
-    String apiKey,
+    String rawCredential,
   ) async {
+    final credential = NewApiCredential.parse(rawCredential);
+    final apiKey = credential.apiKey;
+    if (apiKey.isEmpty) {
+      throw const QuotaException(
+        '请先填写 API Key',
+        kind: QuotaErrorKind.authentication,
+      );
+    }
     // Prefer read-only balance endpoints before sending a minimal chat probe.
     // This covers Sub2API and New API / One API relays without requiring a
     // model selection or consuming tokens.
     final sub2ApiSnapshot = await _tryRefreshSub2Api(account, apiKey);
     if (sub2ApiSnapshot != null) return sub2ApiSnapshot;
-    final newApiSnapshot = await _tryRefreshNewApi(account, apiKey);
+    final newApiSnapshot = await _tryRefreshNewApi(
+      account,
+      apiKey,
+      dashboardToken: credential.dashboardToken,
+    );
     if (newApiSnapshot != null) return newApiSnapshot;
 
     final models = await _availableModels(account.baseUrl, apiKey);
@@ -160,15 +173,27 @@ class QuotaClient {
 
   Future<QuotaSnapshot> _refreshSub2Api(
     MonitorAccount account,
-    String apiKey,
+    String rawCredential,
   ) async {
+    final credential = NewApiCredential.parse(rawCredential);
+    final apiKey = credential.apiKey;
+    if (apiKey.isEmpty) {
+      throw const QuotaException(
+        '请先填写 API Key',
+        kind: QuotaErrorKind.authentication,
+      );
+    }
     final response = await _sub2ApiUsageResponse(
       account.baseUrl,
       apiKey,
       strict: true,
     );
     if (response == null) {
-      final newApiSnapshot = await _tryRefreshNewApi(account, apiKey);
+      final newApiSnapshot = await _tryRefreshNewApi(
+        account,
+        apiKey,
+        dashboardToken: credential.dashboardToken,
+      );
       if (newApiSnapshot != null) return newApiSnapshot;
       throw const QuotaException(
         '未找到 Sub2API /v1/usage 或 New API 余额接口，请检查站点地址和 API Key',
@@ -293,21 +318,30 @@ class QuotaClient {
 
   Future<QuotaSnapshot?> _tryRefreshNewApi(
     MonitorAccount account,
-    String apiKey,
-  ) async {
+    String apiKey, {
+    String dashboardToken = '',
+  }) async {
     final display = await _readNewApiDisplayConfig(account.baseUrl);
     if (display == null) return null;
 
-    // The key-specific endpoint is authoritative. Some New API/HAPI sites
-    // expose OpenAI-compatible billing routes with a synthetic very large
-    // hard limit, especially for unlimited keys. Treating that value as a
-    // wallet balance produces results such as 100,000,000 USD.
+    if (dashboardToken.isNotEmpty) {
+      final wallet = await _tryRefreshNewApiUserBalance(
+        account,
+        dashboardToken,
+        display,
+      );
+      if (wallet != null) return wallet;
+    }
+
+    // `unlimited_quota` is scoped to the API key. It does not mean that the
+    // owning user has an unlimited wallet, so keep looking for account data.
     final tokenUsage = await _tryRefreshNewApiTokenUsage(
       account,
       apiKey,
       display,
     );
-    if (tokenUsage != null) return tokenUsage;
+    if (tokenUsage?.snapshot != null) return tokenUsage!.snapshot;
+    final unlimitedKey = tokenUsage?.unlimited == true;
 
     for (final endpoints in _newApiBillingCandidates(account.baseUrl)) {
       try {
@@ -340,6 +374,10 @@ class QuotaClient {
         final totalUsage = _numberFrom(usage['total_usage']);
         if (limit == null || totalUsage == null) continue;
 
+        // New API intentionally returns this sentinel when an unlimited key
+        // is shown in key-stat mode. It is not the user's wallet balance.
+        if (unlimitedKey && limit >= 99999999) continue;
+
         final used = totalUsage / 100;
         final remaining = (limit - used).clamp(0.0, double.infinity);
         final accessUntil = _numberFrom(subscription['access_until']);
@@ -362,10 +400,16 @@ class QuotaClient {
       }
     }
 
+    if (unlimitedKey) {
+      throw const QuotaException(
+        '这个 New API Key 是“不单独限额”，但站点没有通过普通 Key 返回用户余额。请编辑账户并补充 New API 控制台的登录 Token / PAT。',
+        kind: QuotaErrorKind.configuration,
+      );
+    }
     return null;
   }
 
-  Future<QuotaSnapshot?> _tryRefreshNewApiTokenUsage(
+  Future<_NewApiTokenUsageResult?> _tryRefreshNewApiTokenUsage(
     MonitorAccount account,
     String apiKey,
     _NewApiDisplayConfig display,
@@ -394,19 +438,7 @@ class QuotaClient {
         return null;
       }
       if (data['unlimited_quota'] == true) {
-        final expiresAt = _numberFrom(data['expires_at']);
-        return QuotaSnapshot(
-          accountId: account.id,
-          accountName: account.name,
-          remaining: 0,
-          unit: display.unit,
-          updatedAt: DateTime.now(),
-          resetAt: expiresAt == null || expiresAt <= 0
-              ? null
-              : _dateFrom(expiresAt),
-          message: 'New API Key 无限额度',
-          unlimited: true,
-        );
+        return const _NewApiTokenUsageResult(unlimited: true);
       }
       final availableRaw = _numberFrom(data['total_available']);
       final grantedRaw = _numberFrom(data['total_granted']);
@@ -420,22 +452,68 @@ class QuotaClient {
       final used = usedRaw == null ? null : display.convertQuota(usedRaw);
       if (remaining == null) return null;
       final expiresAt = _numberFrom(data['expires_at']);
-      return QuotaSnapshot(
-        accountId: account.id,
-        accountName: account.name,
-        remaining: remaining.clamp(0.0, double.infinity),
-        limit: limit,
-        used: used,
-        unit: display.unit,
-        updatedAt: DateTime.now(),
-        resetAt: expiresAt == null || expiresAt <= 0
-            ? null
-            : _dateFrom(expiresAt),
-        message: 'New API Key 余额',
+      return _NewApiTokenUsageResult(
+        unlimited: false,
+        snapshot: QuotaSnapshot(
+          accountId: account.id,
+          accountName: account.name,
+          remaining: remaining.clamp(0.0, double.infinity),
+          limit: limit,
+          used: used,
+          unit: display.unit,
+          updatedAt: DateTime.now(),
+          resetAt: expiresAt == null || expiresAt <= 0
+              ? null
+              : _dateFrom(expiresAt),
+          message: 'New API Key 余额',
+        ),
       );
     } catch (_) {
       return null;
     }
+  }
+
+  Future<QuotaSnapshot?> _tryRefreshNewApiUserBalance(
+    MonitorAccount account,
+    String dashboardToken,
+    _NewApiDisplayConfig display,
+  ) async {
+    final uri = _endpoint(
+      _newApiPanelRoot(account.baseUrl).toString(),
+      'api/user/self',
+    );
+    final response = await _client
+        .get(uri, headers: _apiKeyHeaders(dashboardToken))
+        .timeout(const Duration(seconds: 8));
+    if (response.statusCode == 401 || response.statusCode == 403) {
+      throw const QuotaException(
+        'New API 登录 Token / PAT 无效或已过期',
+        kind: QuotaErrorKind.authentication,
+      );
+    }
+    if (!_isSuccess(response)) return null;
+    final body = _decodeObject(response.body);
+    final rawData = body?['data'];
+    if (body == null || body['success'] == false || rawData is! Map) {
+      return null;
+    }
+    final data = Map<String, dynamic>.from(rawData);
+    final quotaRaw = _numberFrom(data['quota']);
+    if (quotaRaw == null) return null;
+    final usedRaw = _numberFrom(data['used_quota']);
+    final remaining = display.convertQuota(quotaRaw);
+    final used = usedRaw == null ? null : display.convertQuota(usedRaw);
+    if (remaining == null) return null;
+    return QuotaSnapshot(
+      accountId: account.id,
+      accountName: account.name,
+      remaining: remaining.clamp(0.0, double.infinity),
+      limit: used == null ? null : remaining + used,
+      used: used,
+      unit: display.unit,
+      updatedAt: DateTime.now(),
+      message: 'New API 用户账户余额',
+    );
   }
 
   Future<_NewApiDisplayConfig?> _readNewApiDisplayConfig(String baseUrl) async {
@@ -931,6 +1009,13 @@ class _NewApiBillingEndpoints {
 
   final Uri subscription;
   final Uri usage;
+}
+
+class _NewApiTokenUsageResult {
+  const _NewApiTokenUsageResult({required this.unlimited, this.snapshot});
+
+  final bool unlimited;
+  final QuotaSnapshot? snapshot;
 }
 
 class _NewApiDisplayConfig {

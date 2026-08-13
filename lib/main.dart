@@ -554,21 +554,17 @@ class _AccountCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
                     Text(
-                      snapshot!.unlimited
-                          ? '无限额度'
-                          : _formatNumber(snapshot!.remaining),
+                      _formatNumber(snapshot!.remaining),
                       style: const TextStyle(
                         fontSize: 30,
                         fontWeight: FontWeight.w900,
                       ),
                     ),
-                    if (!snapshot!.unlimited) ...[
-                      const SizedBox(width: 7),
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 5),
-                        child: Text(snapshot!.unit),
-                      ),
-                    ],
+                    const SizedBox(width: 7),
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 5),
+                      child: Text(snapshot!.unit),
+                    ),
                     const Spacer(),
                     if (snapshot!.requestRemaining != null)
                       Text(
@@ -661,6 +657,7 @@ class _AccountEditorState extends State<AccountEditor> {
   late final TextEditingController appUrl;
   late final TextEditingController loginUrl;
   final credential = TextEditingController();
+  final dashboardCredential = TextEditingController();
   bool saving = false;
   bool hasStoredKey = false;
 
@@ -708,6 +705,7 @@ class _AccountEditorState extends State<AccountEditor> {
       appUrl,
       loginUrl,
       credential,
+      dashboardCredential,
     ]) {
       item.dispose();
     }
@@ -720,6 +718,7 @@ class _AccountEditorState extends State<AccountEditor> {
     final openAI = type == ProviderType.amdRadeon;
     final officialOpenAI = type == ProviderType.openAI;
     final sub2Api = type == ProviderType.sub2Api;
+    final newApiCompatible = openAI || sub2Api;
     final cookie = authenticationType == AuthenticationType.manualCookie;
     return Scaffold(
       appBar: AppBar(
@@ -977,6 +976,22 @@ class _AccountEditorState extends State<AccountEditor> {
               ),
             ),
           ),
+          if (newApiCompatible) ...[
+            const SizedBox(height: 14),
+            TextField(
+              controller: dashboardCredential,
+              obscureText: true,
+              autocorrect: false,
+              enableSuggestions: false,
+              decoration: const InputDecoration(
+                labelText: 'New API 登录 Token / PAT（按需）',
+                helperText:
+                    '仅当站点把 API Key 设为“不单独限额”时需要；可粘贴控制台 access_token、PAT 或含 access_token 的 JSON',
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.account_circle_outlined),
+              ),
+            ),
+          ],
           const SizedBox(height: 22),
           FilledButton.icon(
             onPressed: saving ? null : _save,
@@ -1100,7 +1115,11 @@ class _AccountEditorState extends State<AccountEditor> {
         widget.initial?.id ??
         'account-${DateTime.now().millisecondsSinceEpoch}';
     final account = _draftAccount(id);
-    await widget.controller.saveAccount(account, credential.text);
+    await widget.controller.saveAccount(
+      account,
+      credential.text,
+      newApiDashboardCredential: dashboardCredential.text,
+    );
     final canRefresh = await widget.controller.hasCredential(account);
     if (!mounted) return;
     Navigator.pop(context);
