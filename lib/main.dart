@@ -572,7 +572,46 @@ class _AccountCard extends StatelessWidget {
                       ),
                   ],
                 ),
-                if (ratio != null) ...[
+                if (snapshot!.quotaWindows.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  for (final window in snapshot!.quotaWindows) ...[
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            window.label,
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                        ),
+                        Text(
+                          '${_formatPercent(window.remainingPercent)}%',
+                          style: const TextStyle(fontWeight: FontWeight.w800),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 5),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(99),
+                      child: LinearProgressIndicator(
+                        value: (window.remainingPercent / 100).clamp(0, 1),
+                        minHeight: 6,
+                        backgroundColor: color.withValues(alpha: .12),
+                        color: color,
+                      ),
+                    ),
+                    if (window.resetAt != null) ...[
+                      const SizedBox(height: 4),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: Text(
+                          '${_formatTime(window.resetAt!)} 重置',
+                          style: Theme.of(context).textTheme.labelSmall,
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 8),
+                  ],
+                ] else if (ratio != null) ...[
                   const SizedBox(height: 12),
                   ClipRRect(
                     borderRadius: BorderRadius.circular(99),
@@ -624,6 +663,13 @@ class _AccountCard extends StatelessWidget {
     if (value.abs() >= 100) return value.toStringAsFixed(0);
     if (value.abs() >= 1) return value.toStringAsFixed(2);
     return value.toStringAsFixed(4);
+  }
+
+  String _formatPercent(double value) {
+    final rounded = value.round();
+    return (value - rounded).abs() < .05
+        ? '$rounded'
+        : value.toStringAsFixed(1);
   }
 
   String _formatTime(DateTime value) {
@@ -763,6 +809,13 @@ class _AccountEditorState extends State<AccountEditor> {
               ),
               OutlinedButton.icon(
                 onPressed: () => _applyPreset(
+                  MonitorAccount.openCodeGoDefault(id: 'editor-preview'),
+                ),
+                icon: const Icon(Icons.speed_rounded),
+                label: const Text('OpenCode Go'),
+              ),
+              OutlinedButton.icon(
+                onPressed: () => _applyPreset(
                   MonitorAccount.sub2ApiDefault(id: 'editor-preview'),
                 ),
                 icon: const Icon(Icons.account_balance_wallet_rounded),
@@ -804,6 +857,10 @@ class _AccountEditorState extends State<AccountEditor> {
                   name.text = 'DeepSeek';
                   appUrl.text = 'https://chat.deepseek.com/';
                   loginUrl.text = 'https://platform.deepseek.com/';
+                } else if (value == ProviderType.openCodeGo) {
+                  _setFields(
+                    MonitorAccount.openCodeGoDefault(id: 'editor-preview'),
+                  );
                 } else if (value == ProviderType.openAI) {
                   _setFields(
                     MonitorAccount.openAIDefault(id: 'editor-preview'),
@@ -867,6 +924,18 @@ class _AccountEditorState extends State<AccountEditor> {
               '月预算上限（可选）',
               helper: '填写后显示预算余额和进度；留空则显示最近 30 天已用',
               keyboard: const TextInputType.numberWithOptions(decimal: true),
+            ),
+          if (type == ProviderType.openCodeGo)
+            const Padding(
+              padding: EdgeInsets.only(bottom: 14),
+              child: ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(Icons.speed_rounded),
+                title: Text('自动读取三档订阅额度'),
+                subtitle: Text(
+                  '使用 OpenCode Go API Key 读取 5 小时、每周和每月额度及重置时间；不会发送模型请求。',
+                ),
+              ),
             ),
           if (sub2Api)
             const Padding(
@@ -969,6 +1038,8 @@ class _AccountEditorState extends State<AccountEditor> {
                   ? 'Sub2API 用户 API Key；保存在 iOS Keychain'
                   : type == ProviderType.openAI
                   ? 'OpenAI Costs API 需要组织 Admin API Key'
+                  : type == ProviderType.openCodeGo
+                  ? '粘贴 OpenCode Go API Key；无需 Cookie 或 Workspace ID'
                   : '保存在 iOS Keychain，不写入小组件数据',
               border: const OutlineInputBorder(),
               prefixIcon: Icon(

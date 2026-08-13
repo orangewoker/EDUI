@@ -28,4 +28,12 @@ void main() {
       isNot(contains('session=secret-cookie-value')),
     );
   });
+
+  test('OpenCode Go preset uses the official read-only usage endpoint', () {
+    final account = MonitorAccount.openCodeGoDefault(id: 'opencode-go');
+    expect(account.providerType, ProviderType.openCodeGo);
+    expect(account.baseUrl, 'https://opencode.ai/zen/go/v1');
+    expect(account.authenticationType, AuthenticationType.apiKey);
+    expect(account.loginUrl, 'https://opencode.ai/zen/go');
+  });
 }

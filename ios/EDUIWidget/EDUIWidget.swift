@@ -210,7 +210,7 @@ struct QuotaItem: Decodable, Identifiable {
 
     var displayWindows: [QuotaWindow] {
         if let quotaWindows, !quotaWindows.isEmpty {
-            return Array(quotaWindows.prefix(2))
+            return Array(quotaWindows.prefix(3))
         }
         guard isSubscription else { return [] }
         return [
@@ -691,7 +691,7 @@ struct EDUIWidgetView: View {
             accountHeader(item, dense: true)
             if item.isSubscription {
                 HStack(alignment: .top, spacing: 8) {
-                    ForEach(item.displayWindows) { window in
+                    ForEach(Array(item.displayWindows.prefix(2))) { window in
                         smallQuotaSummary(window)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
@@ -775,7 +775,9 @@ struct EDUIWidgetView: View {
     }
 
     private func subscriptionCard(_ item: QuotaItem, compact: Bool) -> some View {
-        let windows = item.displayWindows
+        let windows = family == .systemSmall
+            ? Array(item.displayWindows.prefix(2))
+            : item.displayWindows
         return VStack(alignment: .leading, spacing: compact ? 4 : 6) {
             accountHeader(item)
             if family == .systemSmall, windows.count > 1 {
@@ -792,7 +794,9 @@ struct EDUIWidgetView: View {
             } else if let first = windows.first {
                 prominentWindow(first, compact: compact)
                 if windows.count > 1 {
-                    compactWindow(windows[1], compact: compact)
+                    ForEach(Array(windows.dropFirst())) { window in
+                        compactWindow(window, compact: compact)
+                    }
                 }
             }
         }

@@ -669,6 +669,85 @@ void main() {
     expect(snapshot.message, '余额可用');
   });
 
+  test('reads all three OpenCode Go subscription windows', () async {
+    final mock = MockClient((request) async {
+      expect(request.method, 'GET');
+      expect(request.url.toString(), 'https://opencode.ai/zen/go/v1/usage');
+      expect(request.headers['Authorization'], 'Bearer opencode-go-test-key');
+      return http.Response(
+        jsonEncode({
+          'usage': {
+            'rolling': {
+              'status': 'ok',
+              'percent': 18,
+              'resetsAt': '2026-08-13T18:44:00.000Z',
+            },
+            'weekly': {
+              'status': 'ok',
+              'percent': 35,
+              'resetsAt': '2026-08-17T00:00:00.000Z',
+            },
+            'monthly': {
+              'status': 'ok',
+              'percent': 47,
+              'resetsAt': '2026-09-13T12:00:00.000Z',
+            },
+          },
+        }),
+        200,
+      );
+    });
+
+    final snapshot = await QuotaClient(client: mock).refresh(
+      MonitorAccount.openCodeGoDefault(id: 'opencode-go'),
+      'opencode-go-test-key',
+    );
+
+    expect(snapshot.planLabel, 'GO');
+    expect(snapshot.remaining, 82);
+    expect(snapshot.quotaWindows, hasLength(3));
+    expect(snapshot.quotaWindows.map((item) => item.label), [
+      '5 小时额度',
+      '本周额度',
+      '本月额度',
+    ]);
+    expect(snapshot.quotaWindows.map((item) => item.remainingPercent), [
+      82,
+      65,
+      53,
+    ]);
+    expect(
+      snapshot.quotaWindows.first.resetAt?.toUtc(),
+      DateTime.utc(2026, 8, 13, 18, 44),
+    );
+  });
+
+  test('classifies an invalid OpenCode Go API key as authentication', () async {
+    final mock = MockClient(
+      (_) async => http.Response(
+        jsonEncode({
+          'type': 'error',
+          'error': {'type': 'AuthError', 'message': 'Unauthorized'},
+        }),
+        401,
+      ),
+    );
+
+    await expectLater(
+      QuotaClient(client: mock).refresh(
+        MonitorAccount.openCodeGoDefault(id: 'opencode-go'),
+        'invalid-key',
+      ),
+      throwsA(
+        isA<QuotaException>().having(
+          (error) => error.kind,
+          'kind',
+          QuotaErrorKind.authentication,
+        ),
+      ),
+    );
+  });
+
   test('reads dotted custom JSON paths', () async {
     final mock = MockClient(
       (request) async => http.Response(

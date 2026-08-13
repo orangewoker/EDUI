@@ -41,6 +41,7 @@ class QuotaClient {
           ProviderType.sub2Api => _refreshSub2Api(account, key),
           ProviderType.amdRadeon => _refreshOpenAICompatible(account, key),
           ProviderType.deepSeek => _refreshDeepSeek(account, key),
+          ProviderType.openCodeGo => _refreshOpenCodeGo(account, key),
           ProviderType.customJson => _refreshCustom(account, key),
         };
       } catch (error) {
@@ -673,6 +674,59 @@ class QuotaClient {
       unit: '${first['currency'] ?? account.unit}',
       updatedAt: DateTime.now(),
       message: body['is_available'] == false ? '当前余额不可用' : '余额可用',
+    );
+  }
+
+  Future<QuotaSnapshot> _refreshOpenCodeGo(
+    MonitorAccount account,
+    String apiKey,
+  ) async {
+    final response = await _client
+        .get(
+          _endpoint(account.baseUrl, 'usage'),
+          headers: _apiKeyHeaders(apiKey),
+        )
+        .timeout(const Duration(seconds: 30));
+    _requireSuccess(response);
+    final body = _decodeObject(response.body);
+    final usage = body?['usage'];
+    if (body == null || usage is! Map) {
+      throw const QuotaException('OpenCode Go 用量响应缺少 usage');
+    }
+
+    final windows = <QuotaWindow>[
+      ?_openCodeGoWindow(usage['rolling'], '5 小时额度'),
+      ?_openCodeGoWindow(usage['weekly'], '本周额度'),
+      ?_openCodeGoWindow(usage['monthly'], '本月额度'),
+    ];
+    if (windows.isEmpty) {
+      throw const QuotaException('OpenCode Go 没有返回可识别的订阅额度');
+    }
+    final primary = windows.first;
+    return QuotaSnapshot(
+      accountId: account.id,
+      accountName: account.name,
+      remaining: primary.remainingPercent,
+      limit: 100,
+      used: 100 - primary.remainingPercent,
+      unit: '%',
+      updatedAt: DateTime.now(),
+      resetAt: primary.resetAt,
+      message: 'OpenCode Go 5 小时、每周与每月额度',
+      planLabel: 'GO',
+      quotaWindows: windows,
+    );
+  }
+
+  QuotaWindow? _openCodeGoWindow(dynamic source, String label) {
+    if (source is! Map) return null;
+    final window = Map<String, dynamic>.from(source);
+    final usedPercent = _numberFrom(window['percent']);
+    if (usedPercent == null) return null;
+    return QuotaWindow(
+      label: label,
+      remainingPercent: (100 - usedPercent).clamp(0.0, 100.0),
+      resetAt: _dateFrom(window['resetsAt']),
     );
   }
 

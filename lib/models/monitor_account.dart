@@ -5,6 +5,7 @@ enum ProviderType {
   sub2Api,
   amdRadeon,
   deepSeek,
+  openCodeGo,
   customJson;
 
   String get label => switch (this) {
@@ -12,6 +13,7 @@ enum ProviderType {
     ProviderType.sub2Api => 'Sub2API 账户余额',
     ProviderType.amdRadeon => 'OpenAI 兼容额度（自动识别）',
     ProviderType.deepSeek => 'DeepSeek 余额',
+    ProviderType.openCodeGo => 'OpenCode Go 订阅额度',
     ProviderType.customJson => '官方账户 / 自定义 JSON',
   };
 }
@@ -119,6 +121,17 @@ class MonitorAccount {
     appUrl: 'https://chatgpt.com/',
     loginUrl: 'https://chatgpt.com/auth/login',
   );
+
+  factory MonitorAccount.openCodeGoDefault({required String id}) =>
+      MonitorAccount(
+        id: id,
+        name: 'OpenCode Go',
+        providerType: ProviderType.openCodeGo,
+        baseUrl: 'https://opencode.ai/zen/go/v1',
+        unit: '%',
+        appUrl: 'https://opencode.ai/',
+        loginUrl: 'https://opencode.ai/zen/go',
+      );
 
   MonitorAccount copyWith({
     String? name,
